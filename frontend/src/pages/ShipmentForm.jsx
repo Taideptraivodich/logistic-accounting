@@ -37,6 +37,10 @@ export default function ShipmentForm() {
   const [saving, setSaving] = useState(false);
   const [newSupplierName, setNewSupplierName] = useState('');
   const [addingSupplier, setAddingSupplier] = useState(false);
+  const [maLo, setMaLo] = useState(null);
+  const [linkedReceipts, setLinkedReceipts] = useState([]);
+  const [linkedPayments, setLinkedPayments] = useState([]);
+  const [customerName, setCustomerName] = useState(null);
 
   // ---- Tải danh mục ----
   useEffect(() => {
@@ -91,6 +95,10 @@ export default function ShipmentForm() {
             ghi_chu: c.ghi_chu,
           }))
         );
+        setMaLo(data.ma_lo);
+        setCustomerName(data.customer_name);
+        setLinkedReceipts(data.linked_receipts || []);
+        setLinkedPayments(data.linked_payments || []);
       })
       .catch(() => message.error('Không tải được lô hàng'))
       .finally(() => setLoading(false));
@@ -263,12 +271,76 @@ export default function ShipmentForm() {
     },
     {
       title: '',
-      width: 50,
+      width: 160,
       render: (_, row) => (
-        <Popconfirm title="Xoá dòng chi phí này?" onConfirm={() => removeCharge(row.key)}>
-          <Button type="text" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
+        <Space size={4}>
+          {isEdit && (
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() => quickCreatePaymentForCharge(row)}
+              title="Tạo phiếu chi cho dòng này"
+            >
+              Tạo phiếu chi
+            </Button>
+          )}
+          <Popconfirm title="Xoá dòng chi phí này?" onConfirm={() => removeCharge(row.key)}>
+            <Button type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
       ),
+    },
+  ];
+
+  // Điều hướng sang màn "Phiếu thu / chi" kèm dữ liệu điền sẵn (khách hàng/NCC, số tiền, quỹ,
+  // lô hàng liên kết, nội dung gợi ý) và tự mở modal "Tạo phiếu" luôn — đỡ phải tự gõ lại từ đầu.
+  const quickCreateReceiptForCuoc = () => {
+    const customerId = form.getFieldValue('customer_id');
+    if (!customerId) {
+      message.warning('Vui lòng chọn khách hàng trước');
+      return;
+    }
+    const pm = form.getFieldValue('cuoc_payment_method_id');
+    const params = new URLSearchParams({
+      tab: 'thu',
+      new: '1',
+      customer_id: String(customerId),
+      amount: String(cuocDv || 0),
+      ghi_chu: `Thu cước dịch vụ - Lô hàng ${maLo || ''}`.trim(),
+    });
+    if (id) params.set('shipment_id', String(id));
+    if (pm) params.set('payment_method_id', String(pm));
+    navigate(`/vouchers?${params.toString()}`);
+  };
+
+  const quickCreatePaymentForCharge = (row) => {
+    if (!row.supplier_id) {
+      message.warning('Vui lòng chọn nhà cung cấp cho dòng chi phí này trước');
+      return;
+    }
+    const params = new URLSearchParams({
+      tab: 'chi',
+      new: '1',
+      supplier_id: String(row.supplier_id),
+      amount: String(row.so_tien || 0),
+      ghi_chu: `${row.loai_phi || 'Chi phí'} - Lô hàng ${maLo || ''}`.trim(),
+    });
+    if (id) params.set('shipment_id', String(id));
+    if (row.payment_method_id) params.set('payment_method_id', String(row.payment_method_id));
+    navigate(`/vouchers?${params.toString()}`);
+  };
+
+  const linkedColumns = (isThu) => [
+    { title: 'Số CT', dataIndex: 'so_ct', width: 110 },
+    { title: 'Ngày', dataIndex: 'ngay_ct', width: 110 },
+    { title: 'Ghi chú', dataIndex: 'ghi_chu' },
+    {
+      title: 'Số tiền',
+      dataIndex: 'so_tien',
+      align: 'right',
+      width: 140,
+      render: (v) => <span style={{ color: isThu ? '#389e0d' : '#cf1322' }}>{formatMoney(v)}</span>,
     },
   ];
 
@@ -372,12 +444,22 @@ export default function ShipmentForm() {
             <Form.Item label="Cước dịch vụ (Doanh thu)" name="cuoc_dv">
               <InputNumber {...moneyProps} />
             </Form.Item>
-            <Form.Item label="Quỹ thu cước (dự kiến)" name="cuoc_payment_method_id" tooltip="Chỉ để ghi nhớ — không tự tạo phiếu thu. Vào màn 'Phiếu thu / chi' để tạo phiếu thu thật khi đã nhận tiền.">
+            <Form.Item
+              label="Quỹ thu cước (dự kiến)"
+              name="cuoc_payment_method_id"
+              tooltip="Chỉ để ghi nhớ — không tự tạo phiếu thu. Bấm 'Tạo phiếu thu cước' bên cạnh (hoặc vào màn 'Phiếu thu / chi') để tạo phiếu thu thật khi đã nhận tiền."
+            >
               <Select
                 allowClear
                 placeholder="Chọn quỹ"
+                style={{ width: 'calc(100% - 108px)' }}
                 options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))}
               />
+              {isEdit && (
+                <Button size="small" style={{ marginLeft: 8 }} onClick={quickCreateReceiptForCuoc}>
+                  Tạo phiếu thu cước
+                </Button>
+              )}
             </Form.Item>
             <Form.Item label="Ghi chú" name="ghi_chu" style={{ gridColumn: 'span 2' }}>
               <Input />
@@ -400,8 +482,45 @@ export default function ShipmentForm() {
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
             Lưu ý: lưu lô hàng KHÔNG tự tạo phiếu thu/phiếu chi. Vào menu "Phiếu thu / chi" để tạo
             phiếu thật khi đã thu tiền khách hoặc đã chi tiền cho NCC (có thể chọn "Lô hàng liên kết"
-            để gắn về lô này).
+            để gắn về lô này), hoặc dùng các nút "Tạo phiếu thu cước" / "Tạo phiếu chi" ở trên — dữ
+            liệu (đối tượng, số tiền, quỹ, nội dung) sẽ được điền sẵn.
           </Typography.Text>
+
+          {isEdit && (
+            <div style={{ marginTop: 24 }}>
+              <Title level={5}>Phiếu thu / chi đã gắn với lô hàng này</Title>
+              <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+                Phiếu thu ({linkedReceipts.length})
+              </Typography.Text>
+              <Table
+                rowKey="id"
+                size="small"
+                columns={linkedColumns(true)}
+                dataSource={linkedReceipts}
+                pagination={false}
+                locale={{ emptyText: 'Chưa có phiếu thu nào gắn lô này' }}
+                style={{ marginBottom: 16 }}
+              />
+              <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+                Phiếu chi ({linkedPayments.length})
+              </Typography.Text>
+              <Table
+                rowKey="id"
+                size="small"
+                columns={linkedColumns(false)}
+                dataSource={linkedPayments}
+                pagination={false}
+                locale={{ emptyText: 'Chưa có phiếu chi nào gắn lô này' }}
+              />
+              <Button
+                size="small"
+                style={{ marginTop: 8 }}
+                onClick={() => navigate('/vouchers')}
+              >
+                Xem/sửa tại màn Phiếu thu / chi
+              </Button>
+            </div>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 32, marginTop: 16, flexWrap: 'wrap' }}>
             <span>

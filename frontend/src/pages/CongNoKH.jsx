@@ -16,6 +16,7 @@ export default function CongNoKH() {
   const [modalOpen, setModalOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
+  const [shipments, setShipments] = useState([]);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
@@ -28,6 +29,7 @@ export default function CongNoKH() {
     load();
     api.get('/customers').then((res) => setCustomers(res.data));
     api.get('/payment-methods').then((res) => setPaymentMethods(res.data));
+    api.get('/shipments').then((res) => setShipments(res.data));
   }, []);
 
   const filteredRows = useMemo(() => {
@@ -236,7 +238,10 @@ export default function CongNoKH() {
               size="small"
               icon={<PlusOutlined />}
               onClick={() => {
-                form.setFieldsValue({ customer_id: detail?.id });
+                form.setFieldsValue({
+                  customer_id: detail?.id,
+                  ghi_chu: `Thu tiền khách hàng ${detail?.name || ''}`.trim(),
+                });
                 setModalOpen(true);
               }}
             >
@@ -308,6 +313,17 @@ export default function CongNoKH() {
           </Form.Item>
           <Form.Item label="Ngày chứng từ" name="ngay_ct" initialValue={dayjs()}>
             <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+          </Form.Item>
+          <Form.Item label="Lô hàng liên kết (không bắt buộc)" name="shipment_id">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Chọn lô hàng nếu có"
+              options={shipments
+                .filter((s) => !detail || s.customer_id === detail.id)
+                .map((s) => ({ value: s.id, label: `${s.ma_lo} — ${s.customer_name || ''}` }))}
+            />
           </Form.Item>
           <Form.Item label="Số tiền" name="so_tien" rules={[{ required: true }]}>
             <InputNumber

@@ -23,6 +23,7 @@ const moneyProps = {
 function VoucherTable({
   kind, ownerOptions, ownerField, ownerLabel, categoryOptions,
   paymentMethods, shipments, presetOwnerId, presetPaymentMethodId,
+  presetShipmentId, presetAmount, presetGhiChu, autoOpenNew, onAutoOpened,
 }) {
   const isThu = kind === 'receipts';
   const [rows, setRows] = useState([]);
@@ -65,9 +66,25 @@ function VoucherTable({
     setEditing(null);
     setTargetType('owner');
     form.resetFields();
-    form.setFieldsValue({ ngay_ct: dayjs(), [ownerField]: ownerFilter });
+    form.setFieldsValue({
+      ngay_ct: dayjs(),
+      [ownerField]: presetOwnerId ? Number(presetOwnerId) : ownerFilter,
+      shipment_id: presetShipmentId ? Number(presetShipmentId) : undefined,
+      so_tien: presetAmount ? Number(presetAmount) : undefined,
+      ghi_chu: presetGhiChu || undefined,
+    });
     setModalOpen(true);
   };
+
+  // Nếu được điều hướng tới từ màn Lô hàng / Công nợ kèm dữ liệu tạo sẵn (?new=1&shipment_id=...&amount=...&ghi_chu=...),
+  // tự mở modal "Tạo phiếu" luôn kèm dữ liệu điền sẵn, khỏi phải bấm lại và nhập lại từ đầu.
+  useEffect(() => {
+    if (autoOpenNew) {
+      openNew();
+      onAutoOpened?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenNew]);
 
   const openEdit = (r) => {
     setEditing(r);
@@ -269,6 +286,18 @@ export default function Vouchers() {
   }, []);
 
   const activeTab = searchParams.get('tab') === 'chi' ? 'chi' : 'thu';
+  const wantsAutoNew = searchParams.get('new') === '1';
+
+  const clearAutoNewParam = () => {
+    setSearchParams((p) => {
+      const next = Object.fromEntries(p);
+      delete next.new;
+      delete next.shipment_id;
+      delete next.amount;
+      delete next.ghi_chu;
+      return next;
+    });
+  };
 
   const items = [
     {
@@ -285,6 +314,11 @@ export default function Vouchers() {
           shipments={shipments}
           presetOwnerId={searchParams.get('customer_id')}
           presetPaymentMethodId={searchParams.get('payment_method_id')}
+          presetShipmentId={searchParams.get('shipment_id')}
+          presetAmount={searchParams.get('amount')}
+          presetGhiChu={searchParams.get('ghi_chu')}
+          autoOpenNew={activeTab === 'thu' && wantsAutoNew}
+          onAutoOpened={clearAutoNewParam}
         />
       ),
     },
@@ -302,6 +336,11 @@ export default function Vouchers() {
           shipments={shipments}
           presetOwnerId={searchParams.get('supplier_id')}
           presetPaymentMethodId={searchParams.get('payment_method_id')}
+          presetShipmentId={searchParams.get('shipment_id')}
+          presetAmount={searchParams.get('amount')}
+          presetGhiChu={searchParams.get('ghi_chu')}
+          autoOpenNew={activeTab === 'chi' && wantsAutoNew}
+          onAutoOpened={clearAutoNewParam}
         />
       ),
     },

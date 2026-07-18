@@ -14,6 +14,16 @@ function nextCode(prefix, table, col) {
   return prefix + String(n).padStart(6, '0');
 }
 
+// Tự sinh "Nội dung"/ghi_chú mặc định khi Senior không tự gõ, để Phiếu thu/chi và Sổ quỹ
+// không bao giờ hiển thị dòng trống — giống cột "Nội dung" trong sao kê ngân hàng.
+// isThu: true = phiếu thu (khách hàng/thu khác), false = phiếu chi (NCC/chi khác).
+function buildDefaultGhiChu({ isThu, ownerName, categoryName, maLo }) {
+  const doiTuong = ownerName || categoryName || (isThu ? 'thu khác' : 'chi khác');
+  const hanhDong = isThu ? 'Thu tiền' : 'Chi tiền';
+  const base = ownerName ? `${hanhDong} ${doiTuong}` : doiTuong;
+  return maLo ? `${base} - Lô hàng ${maLo}` : base;
+}
+
 // ================= PHIẾU THU KHÁCH HÀNG (hoặc "thu khác" không gắn khách hàng) =================
 // Ghi chú: KHÔNG còn tự sinh từ lô hàng nữa — Senior luôn tạo tay tại đây (kể cả khi thu cước
 // một lô hàng cụ thể, chọn "Khách hàng" + tuỳ chọn gắn "Lô hàng liên kết").
@@ -57,6 +67,19 @@ router.post('/receipts', (req, res) => {
   }
   if (!so_tien) return res.status(400).json({ error: 'Thiếu số tiền' });
   const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
+  let finalGhiChu = ghi_chu;
+  if (!finalGhiChu) {
+    const ownerName = customer_id
+      ? db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name
+      : null;
+    const categoryName = category_id
+      ? db.prepare(`SELECT name FROM voucher_categories WHERE id = ?`).get(category_id)?.name
+      : null;
+    const maLo = shipment_id
+      ? db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(shipment_id)?.ma_lo
+      : null;
+    finalGhiChu = buildDefaultGhiChu({ isThu: true, ownerName, categoryName, maLo });
+  }
   const info = db
     .prepare(
       `INSERT INTO customer_receipts (so_ct, customer_id, category_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu)
@@ -64,7 +87,7 @@ router.post('/receipts', (req, res) => {
     )
     .run(
       so_ct, customer_id || null, category_id || null, shipment_id || null,
-      ngay_ct || null, so_tien, payment_method_id || null, ghi_chu || null
+      ngay_ct || null, so_tien, payment_method_id || null, finalGhiChu
     );
   res.json(db.prepare(`SELECT * FROM customer_receipts WHERE id = ?`).get(info.lastInsertRowid));
 });
@@ -75,12 +98,25 @@ router.put('/receipts/:id', (req, res) => {
     return res.status(400).json({ error: 'Vui lòng chọn khách hàng hoặc danh mục thu khác' });
   }
   if (!so_tien) return res.status(400).json({ error: 'Thiếu số tiền' });
+  let finalGhiChu = ghi_chu;
+  if (!finalGhiChu) {
+    const ownerName = customer_id
+      ? db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name
+      : null;
+    const categoryName = category_id
+      ? db.prepare(`SELECT name FROM voucher_categories WHERE id = ?`).get(category_id)?.name
+      : null;
+    const maLo = shipment_id
+      ? db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(shipment_id)?.ma_lo
+      : null;
+    finalGhiChu = buildDefaultGhiChu({ isThu: true, ownerName, categoryName, maLo });
+  }
   db.prepare(
     `UPDATE customer_receipts SET customer_id=?, category_id=?, shipment_id=?, ngay_ct=?, so_tien=?, payment_method_id=?, ghi_chu=?
      WHERE id=?`
   ).run(
     customer_id || null, category_id || null, shipment_id || null, ngay_ct || null,
-    so_tien, payment_method_id || null, ghi_chu || null, req.params.id
+    so_tien, payment_method_id || null, finalGhiChu, req.params.id
   );
   res.json(db.prepare(`SELECT * FROM customer_receipts WHERE id = ?`).get(req.params.id));
 });
@@ -131,6 +167,19 @@ router.post('/payments', (req, res) => {
   }
   if (!so_tien) return res.status(400).json({ error: 'Thiếu số tiền' });
   const so_ct = nextCode('PC', 'supplier_payments', 'so_ct');
+  let finalGhiChu = ghi_chu;
+  if (!finalGhiChu) {
+    const ownerName = supplier_id
+      ? db.prepare(`SELECT name FROM suppliers WHERE id = ?`).get(supplier_id)?.name
+      : null;
+    const categoryName = category_id
+      ? db.prepare(`SELECT name FROM voucher_categories WHERE id = ?`).get(category_id)?.name
+      : null;
+    const maLo = shipment_id
+      ? db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(shipment_id)?.ma_lo
+      : null;
+    finalGhiChu = buildDefaultGhiChu({ isThu: false, ownerName, categoryName, maLo });
+  }
   const info = db
     .prepare(
       `INSERT INTO supplier_payments (so_ct, supplier_id, category_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu)
@@ -138,7 +187,7 @@ router.post('/payments', (req, res) => {
     )
     .run(
       so_ct, supplier_id || null, category_id || null, shipment_id || null,
-      ngay_ct || null, so_tien, payment_method_id || null, ghi_chu || null
+      ngay_ct || null, so_tien, payment_method_id || null, finalGhiChu
     );
   res.json(db.prepare(`SELECT * FROM supplier_payments WHERE id = ?`).get(info.lastInsertRowid));
 });
@@ -149,12 +198,25 @@ router.put('/payments/:id', (req, res) => {
     return res.status(400).json({ error: 'Vui lòng chọn nhà cung cấp hoặc danh mục chi khác' });
   }
   if (!so_tien) return res.status(400).json({ error: 'Thiếu số tiền' });
+  let finalGhiChu = ghi_chu;
+  if (!finalGhiChu) {
+    const ownerName = supplier_id
+      ? db.prepare(`SELECT name FROM suppliers WHERE id = ?`).get(supplier_id)?.name
+      : null;
+    const categoryName = category_id
+      ? db.prepare(`SELECT name FROM voucher_categories WHERE id = ?`).get(category_id)?.name
+      : null;
+    const maLo = shipment_id
+      ? db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(shipment_id)?.ma_lo
+      : null;
+    finalGhiChu = buildDefaultGhiChu({ isThu: false, ownerName, categoryName, maLo });
+  }
   db.prepare(
     `UPDATE supplier_payments SET supplier_id=?, category_id=?, shipment_id=?, ngay_ct=?, so_tien=?, payment_method_id=?, ghi_chu=?
      WHERE id=?`
   ).run(
     supplier_id || null, category_id || null, shipment_id || null, ngay_ct || null,
-    so_tien, payment_method_id || null, ghi_chu || null, req.params.id
+    so_tien, payment_method_id || null, finalGhiChu, req.params.id
   );
   res.json(db.prepare(`SELECT * FROM supplier_payments WHERE id = ?`).get(req.params.id));
 });
