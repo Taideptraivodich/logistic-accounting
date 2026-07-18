@@ -103,6 +103,10 @@ router.post('/', (req, res) => {
 
   if (!customer_id) return res.status(400).json({ error: 'Vui lòng chọn khách hàng' });
 
+  // Dự phòng: nếu quên nhập "Ngày chứng từ", dùng "Ngày tờ khai" làm ngày phát sinh —
+  // tránh lô hàng bị thiếu ngày -> "biến mất" khỏi báo cáo công nợ theo tháng / doanh thu.
+  const ngayCtHieuLuc = ngay_ct || ngay_to_khai || null;
+
   const trx = db.transaction(() => {
     const ma_lo = nextCode('LO', 'shipments', 'ma_lo');
     const info = db
@@ -112,7 +116,7 @@ router.post('/', (req, res) => {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
-        ma_lo, ngay_ct || null, customer_id, invoice || null, so_to_khai || null,
+        ma_lo, ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null,
         ngay_to_khai || null, so_container || null, so_luong_cont || null,
         cuoc_dv || 0, ghi_chu || null, status || 'hoan_thanh',
         cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0
@@ -125,7 +129,7 @@ router.post('/', (req, res) => {
     );
     for (const c of charges) {
       insCharge.run(
-        shipmentId, c.ngay_ct || ngay_ct || null, c.loai_phi || null,
+        shipmentId, c.ngay_ct || ngayCtHieuLuc, c.loai_phi || null,
         c.supplier_id || null, c.payment_method_id || null,
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );
@@ -137,7 +141,7 @@ router.post('/', (req, res) => {
       db.prepare(
         `INSERT INTO customer_receipts (so_ct, customer_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu)
          VALUES (?,?,?,?,?,?,?)`
-      ).run(so_ct, customer_id, shipmentId, ngay_ct || null, cuoc_dv, cuoc_payment_method_id || null, 'Thu cước lô ' + ma_lo);
+      ).run(so_ct, customer_id, shipmentId, ngayCtHieuLuc, cuoc_dv, cuoc_payment_method_id || null, 'Thu cước lô ' + ma_lo);
     }
 
     // Chi phí nào đánh dấu "đã thanh toán" -> tự tạo phiếu chi NCC tương ứng
@@ -149,7 +153,7 @@ router.post('/', (req, res) => {
       if (c.da_thanh_toan && c.supplier_id && c.so_tien) {
         const so_ct = nextCode('PC', 'supplier_payments', 'so_ct');
         insPay.run(
-          so_ct, c.supplier_id, shipmentId, c.ngay_ct || ngay_ct || null,
+          so_ct, c.supplier_id, shipmentId, c.ngay_ct || ngayCtHieuLuc,
           c.so_tien, c.payment_method_id || null, 'Chi ' + (c.loai_phi || '') + ' lô ' + ma_lo
         );
       }
@@ -170,13 +174,15 @@ router.put('/:id', (req, res) => {
     cuoc_payment_method_id, charges = [],
   } = req.body;
 
+  const ngayCtHieuLuc = ngay_ct || ngay_to_khai || null;
+
   const trx = db.transaction(() => {
     db.prepare(
       `UPDATE shipments SET ngay_ct=?, customer_id=?, invoice=?, so_to_khai=?, ngay_to_khai=?,
        so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, cuoc_payment_method_id=?, updated_at=datetime('now')
        WHERE id=?`
     ).run(
-      ngay_ct || null, customer_id, invoice || null, so_to_khai || null, ngay_to_khai || null,
+      ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null, ngay_to_khai || null,
       so_container || null, so_luong_cont || null, cuoc_dv || 0, ghi_chu || null,
       status || 'hoan_thanh', cuoc_payment_method_id || null, req.params.id
     );
@@ -188,7 +194,7 @@ router.put('/:id', (req, res) => {
     );
     for (const c of charges) {
       insCharge.run(
-        req.params.id, c.ngay_ct || ngay_ct || null, c.loai_phi || null,
+        req.params.id, c.ngay_ct || ngayCtHieuLuc, c.loai_phi || null,
         c.supplier_id || null, c.payment_method_id || null,
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );

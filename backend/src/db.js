@@ -20,6 +20,10 @@ function ensureColumn(table, column, ddl) {
 }
 ensureColumn('shipment_charges', 'la_chi_ho', 'la_chi_ho INTEGER DEFAULT 0');
 
+// Chi hộ đôi khi có cả phí nhà xe / phí ra vào cổng (không chỉ thuế, phí HQ, phí CO) —
+// tự thêm loại phí này vào danh mục nếu Senior chưa có, để chọn nhanh khi nhập lô hàng.
+db.exec(`INSERT OR IGNORE INTO fee_types (name) VALUES ('Phí ra vào cổng')`);
+
 // node:sqlite không có db.transaction() như better-sqlite3, nên tự bọc thủ công.
 // Cách dùng: db.transaction(() => { ... các lệnh ghi ... })()
 db.transaction = (fn) => {

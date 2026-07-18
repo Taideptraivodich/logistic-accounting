@@ -6,7 +6,12 @@ const router = express.Router();
 // Phải thu = cước dịch vụ (doanh thu) + các khoản CHI HỘ (sc.la_chi_ho = 1) của lô hàng KH đó.
 // Đã thu = tổng phiếu thu. Còn nợ = Phải thu - Đã thu.
 router.get('/cong-no-kh', (req, res) => {
-  const customers = db.prepare(`SELECT id, name FROM customers ORDER BY name`).all();
+  const { q } = req.query;
+  let customers = db.prepare(`SELECT id, name FROM customers ORDER BY name`).all();
+  if (q) {
+    const like = q.toLowerCase();
+    customers = customers.filter((c) => c.name.toLowerCase().includes(like));
+  }
   const result = customers.map((c) => {
     const cuoc_dv =
       db.prepare(`SELECT COALESCE(SUM(cuoc_dv),0) as t FROM shipments WHERE customer_id = ?`).get(c.id).t || 0;
@@ -78,20 +83,31 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
   const customer = db.prepare(`SELECT * FROM customers WHERE id = ?`).get(customer_id);
   if (!customer) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
 
+  // Lưu ý: nếu Senior lỡ không nhập "Ngày chứng từ" khi tạo lô hàng, dùng "Ngày tờ khai"
+  // làm ngày phát sinh dự phòng — tránh trường hợp lô hàng bị "biến mất" khỏi bảng công nợ
+  // theo tháng chỉ vì thiếu ngày chứng từ.
   const shipmentRows = db
     .prepare(
-      `SELECT s.ngay_ct, s.cuoc_dv,
+      `SELECT COALESCE(NULLIF(s.ngay_ct, ''), NULLIF(s.ngay_to_khai, '')) as ngay_hieu_luc, s.cuoc_dv,
         COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as chi_ho
        FROM shipments s
-       WHERE s.customer_id = ? AND s.ngay_ct IS NOT NULL AND s.ngay_ct != ''
-       ORDER BY s.ngay_ct`
+       WHERE s.customer_id = ?
+       ORDER BY ngay_hieu_luc`
     )
     .all(customer_id);
 
   const monthMap = new Map();
   for (const s of shipmentRows) {
-    const key = (s.ngay_ct || '').slice(0, 7); // YYYY-MM
-    if (key.length !== 7) continue;
+    const key = (s.ngay_hieu_luc || '').slice(0, 7); // YYYY-MM
+    if (key.length !== 7) {
+      // Không có cả ngày chứng từ lẫn ngày tờ khai -> gom vào nhóm "Chưa xác định ngày"
+      const k = '__no_date__';
+      if (!monthMap.has(k)) monthMap.set(k, { cuoc: 0, chi_ho: 0 });
+      const m = monthMap.get(k);
+      m.cuoc += s.cuoc_dv || 0;
+      m.chi_ho += s.chi_ho || 0;
+      continue;
+    }
     if (!monthMap.has(key)) monthMap.set(key, { cuoc: 0, chi_ho: 0 });
     const m = monthMap.get(key);
     m.cuoc += s.cuoc_dv || 0;
@@ -100,8 +116,9 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
   const months = [...monthMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([key, v]) => {
-      const [y, mo] = key.split('-');
-      return { key, nhan: `Tháng ${mo}/${y.slice(2)}`, cuoc: v.cuoc, chi_ho: v.chi_ho, phat_sinh: v.cuoc + v.chi_ho };
+      const nhan =
+        key === '__no_date__' ? 'Chưa xác định ngày' : `Tháng ${key.split('-')[1]}/${key.slice(2, 4)}`;
+      return { key, nhan, cuoc: v.cuoc, chi_ho: v.chi_ho, phat_sinh: v.cuoc + v.chi_ho };
     });
 
   const tong_da_thu =
@@ -137,16 +154,26 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
 // ================= CÔNG NỢ NHÀ CUNG CẤP =================
 // Phải trả = tổng shipment_charges gắn NCC. Đã trả = tổng phiếu chi NCC. Còn nợ = Phải trả - Đã trả
 router.get('/cong-no-ncc', (req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT s.id, s.name,
+  const { q } = req.query;
+  let sql = `SELECT s.id, s.name,
         COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE supplier_id = s.id), 0) as phai_tra,
+        COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE supplier_id = s.id AND la_chi_ho = 1), 0) as chi_ho,
         COALESCE((SELECT SUM(so_tien) FROM supplier_payments WHERE supplier_id = s.id), 0) as da_tra
-       FROM suppliers s
-       ORDER BY s.name`
-    )
-    .all();
-  res.json(rows.map((r) => ({ ...r, con_no: r.phai_tra - r.da_tra })));
+       FROM suppliers s`;
+  const params = [];
+  if (q) {
+    sql += ' WHERE s.name LIKE ?';
+    params.push(`%${q}%`);
+  }
+  sql += ' ORDER BY s.name';
+  const rows = db.prepare(sql).all(...params);
+  res.json(
+    rows.map((r) => ({
+      ...r,
+      cuoc_van_chuyen: r.phai_tra - r.chi_ho, // cước vận chuyển / phí thường (không phải chi hộ)
+      con_no: r.phai_tra - r.da_tra,
+    }))
+  );
 });
 
 router.get('/cong-no-ncc/:supplier_id/chi-tiet', (req, res) => {
@@ -182,25 +209,35 @@ router.get('/cong-no-ncc/:supplier_id/theo-thang', (req, res) => {
   const supplier = db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(supplier_id);
   if (!supplier) return res.status(404).json({ error: 'Không tìm thấy nhà cung cấp' });
 
+  // Dự phòng: nếu dòng chi phí thiếu ngày chứng từ riêng, lấy ngày chứng từ / ngày tờ khai
+  // của lô hàng gắn kèm, để không bị rơi mất khỏi bảng công nợ theo tháng.
   const chargeRows = db
     .prepare(
-      `SELECT ngay_ct, so_tien FROM shipment_charges
-       WHERE supplier_id = ? AND ngay_ct IS NOT NULL AND ngay_ct != ''
-       ORDER BY ngay_ct`
+      `SELECT COALESCE(
+          NULLIF(sc.ngay_ct, ''), NULLIF(s.ngay_ct, ''), NULLIF(s.ngay_to_khai, '')
+        ) as ngay_hieu_luc, sc.so_tien, sc.la_chi_ho
+       FROM shipment_charges sc
+       LEFT JOIN shipments s ON s.id = sc.shipment_id
+       WHERE sc.supplier_id = ?
+       ORDER BY ngay_hieu_luc`
     )
     .all(supplier_id);
 
   const monthMap = new Map();
   for (const c of chargeRows) {
-    const key = (c.ngay_ct || '').slice(0, 7);
-    if (key.length !== 7) continue;
-    monthMap.set(key, (monthMap.get(key) || 0) + (c.so_tien || 0));
+    const key = (c.ngay_hieu_luc || '').length === 7 ? c.ngay_hieu_luc.slice(0, 7) : (c.ngay_hieu_luc || '').slice(0, 7);
+    const finalKey = key.length === 7 ? key : '__no_date__';
+    if (!monthMap.has(finalKey)) monthMap.set(finalKey, { cuoc_van_chuyen: 0, chi_ho: 0 });
+    const m = monthMap.get(finalKey);
+    if (c.la_chi_ho) m.chi_ho += c.so_tien || 0;
+    else m.cuoc_van_chuyen += c.so_tien || 0;
   }
   const months = [...monthMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, phat_sinh]) => {
-      const [y, mo] = key.split('-');
-      return { key, nhan: `Tháng ${mo}/${y.slice(2)}`, phat_sinh };
+    .map(([key, v]) => {
+      const nhan =
+        key === '__no_date__' ? 'Chưa xác định ngày' : `Tháng ${key.split('-')[1]}/${key.slice(2, 4)}`;
+      return { key, nhan, cuoc_van_chuyen: v.cuoc_van_chuyen, chi_ho: v.chi_ho, phat_sinh: v.cuoc_van_chuyen + v.chi_ho };
     });
 
   const tong_da_tra =
@@ -291,9 +328,10 @@ router.get('/so-quy/:pm_id/chi-tiet', (req, res) => {
 // Chi phí = toàn bộ shipment_charges (kể cả phần chi hộ, vì tiền đã thực chi ra cho NCC/HQ).
 // Lợi nhuận = Doanh thu - Chi phí (phần chi hộ tự triệt tiêu nếu thu đúng bằng số đã chi hộ).
 router.get('/doanh-thu', (req, res) => {
-  const { from, to } = req.query;
+  const { from, to, q } = req.query;
   let sql = `
-    SELECT s.id, s.ma_lo, s.ngay_ct, c.name as customer_name, s.invoice, s.so_container,
+    SELECT s.id, s.ma_lo, s.ngay_ct, c.name as customer_name, s.invoice,
+      s.so_to_khai, s.ngay_to_khai, s.so_container, s.so_luong_cont,
       s.cuoc_dv,
       COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id), 0) as chi_phi,
       COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as chi_ho
@@ -309,11 +347,41 @@ router.get('/doanh-thu', (req, res) => {
     sql += ' AND s.ngay_ct <= ?';
     params.push(to);
   }
+  if (q) {
+    sql += ' AND (s.ma_lo LIKE ? OR s.invoice LIKE ? OR s.so_to_khai LIKE ? OR s.so_container LIKE ? OR c.name LIKE ?)';
+    const like = `%${q}%`;
+    params.push(like, like, like, like, like);
+  }
   sql += ' ORDER BY s.ngay_ct, s.id';
   const rows = db.prepare(sql).all(...params);
+
+  // Lấy breakdown chi phí theo TỪNG loại phí cho mỗi lô hàng (giống bố cục file Excel gốc:
+  // mỗi loại phí 1 cột riêng, ví dụ Chi hải quan / Phí nâng / Phí hạ / Thuế / Lệ phí ...).
+  const shipmentIds = rows.map((r) => r.id);
+  const byTypeMap = new Map(); // shipment_id -> { loai_phi: so_tien }
+  const feeTypeSet = new Set();
+  if (shipmentIds.length) {
+    const placeholders = shipmentIds.map(() => '?').join(',');
+    const chargeRows = db
+      .prepare(
+        `SELECT shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)') as loai_phi, SUM(so_tien) as so_tien
+         FROM shipment_charges WHERE shipment_id IN (${placeholders})
+         GROUP BY shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)')`
+      )
+      .all(...shipmentIds);
+    for (const c of chargeRows) {
+      feeTypeSet.add(c.loai_phi);
+      if (!byTypeMap.has(c.shipment_id)) byTypeMap.set(c.shipment_id, {});
+      byTypeMap.get(c.shipment_id)[c.loai_phi] = c.so_tien || 0;
+    }
+  }
+  // Sắp xếp cột loại phí theo đúng thứ tự trong danh mục "Loại phí" (nếu có), phần còn lại xếp sau.
+  const feeTypeOrder = db.prepare(`SELECT name FROM fee_types ORDER BY name`).all().map((f) => f.name);
+  const fee_types = [...feeTypeOrder.filter((f) => feeTypeSet.has(f)), ...[...feeTypeSet].filter((f) => !feeTypeOrder.includes(f))];
+
   const result = rows.map((r) => {
     const doanh_thu = (r.cuoc_dv || 0) + (r.chi_ho || 0);
-    return { ...r, doanh_thu, loi_nhuan: doanh_thu - r.chi_phi };
+    return { ...r, by_type: byTypeMap.get(r.id) || {}, doanh_thu, loi_nhuan: doanh_thu - r.chi_phi };
   });
   const tong = result.reduce(
     (acc, r) => ({
@@ -323,7 +391,7 @@ router.get('/doanh-thu', (req, res) => {
     }),
     { doanh_thu: 0, chi_phi: 0, loi_nhuan: 0 }
   );
-  res.json({ rows: result, tong });
+  res.json({ rows: result, fee_types, tong });
 });
 
 // ================= DASHBOARD TỔNG QUAN =================

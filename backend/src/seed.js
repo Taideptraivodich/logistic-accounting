@@ -17,7 +17,7 @@ const suppliers = [
 
 const feeTypes = [
   "Chi hải quan", "Chi phí khác", "Kiểm hóa", "Lệ phí", "Phí CO",
-  "Phí CSHT", "Phí hạ", "Phí nâng", "Phí vận chuyển", "Thuế",
+  "Phí CSHT", "Phí hạ", "Phí nâng", "Phí ra vào cổng", "Phí vận chuyển", "Thuế",
 ];
 
 const paymentMethods = [
