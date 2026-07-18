@@ -25,6 +25,11 @@ function nextCode(prefix, table, col) {
 // LƯU Ý CHO PHIÊN SAU: nếu Senior tự sửa tay 1 phiếu tự sinh (vd đổi quỹ) rồi sau đó sửa lại lô
 // hàng, phiếu tự sinh đó sẽ bị xoá/tạo lại và MẤT chỉnh sửa tay đó — đây là đánh đổi đã biết,
 // chưa xử lý (có thể cần bàn thêm với Senior nếu phát sinh khó chịu trong thực tế).
+// CẬP NHẬT: "Nhà cung cấp" ở dòng chi phí KHÔNG bắt buộc để tự sinh phiếu chi, trong MỌI trường
+// hợp (kể cả dòng "Chi hộ"). Chỉ cần tick "Đã thanh toán?" + Số tiền > 0. Đã thử 2 phương án:
+// (1) bắt buộc supplier_id cho mọi dòng — sai, chặn cả chi phí thường không cần NCC;
+// (2) chỉ bắt buộc supplier_id khi la_chi_ho=true — cũng sai, thực tế Senior vẫn muốn tự tạo
+// phiếu chi hộ dù chưa chọn NCC. Chốt: KHÔNG có điều kiện supplier_id nào cả, xem vòng lặp charges.
 
 function buildAutoContentThu({ soToKhai, customerName, maLo }) {
   const tkPart = soToKhai ? `TK ${soToKhai} - ` : '';
@@ -52,13 +57,18 @@ function regenerateAutoVouchers(shipmentId, { soToKhai, customerId, customerName
   }
 
   for (const c of charges) {
-    if (!c.da_thanh_toan || !c.supplier_id || !(c.so_tien > 0)) continue;
+    if (!c.da_thanh_toan || !(c.so_tien > 0)) continue;
+    // NCC KHÔNG bắt buộc để tự tạo phiếu chi, kể cả khi dòng đó là "Chi hộ" — thực tế Senior vẫn
+    // muốn tự tạo phiếu chi vào đúng Quỹ chi đã chọn dù chưa/không chọn NCC (đã xác nhận qua test
+    // thực tế: dòng "Chi hộ" + "Đã thanh toán" nhưng chưa chọn NCC vẫn phải tự sinh phiếu). Đợt
+    // trước có thêm điều kiện bắt buộc supplier_id khi la_chi_ho=true — ĐÃ BỎ vì sai, chỉ cần
+    // "Đã thanh toán?" + Số tiền > 0 là đủ cho MỌI dòng, không phân biệt Chi hộ hay không.
     const so_ct = nextCode('PC', 'supplier_payments', 'so_ct');
     const ghi_chu = buildAutoContentChi({ soToKhai, loaiPhi: c.loai_phi, maLo });
     db.prepare(
       `INSERT INTO supplier_payments (so_ct, supplier_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu, auto_generated)
        VALUES (?,?,?,?,?,?,?,1)`
-    ).run(so_ct, c.supplier_id, shipmentId, c.ngay_ct || ngayCt || null, c.so_tien, c.payment_method_id || null, ghi_chu);
+    ).run(so_ct, c.supplier_id || null, shipmentId, c.ngay_ct || ngayCt || null, c.so_tien, c.payment_method_id || null, ghi_chu);
   }
 }
 

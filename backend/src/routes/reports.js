@@ -322,26 +322,43 @@ router.put('/cong-no-ncc/:supplier_id/notes/:month_key', (req, res) => {
 });
 
 // ================= SỔ QUỸ (theo hình thức thanh toán) =================
+// Hỗ trợ lọc theo khoảng ngày (?from=YYYY-MM-DD&to=YYYY-MM-DD), giống khung lọc "sao kê" ngân
+// hàng. Khi có "from": "Đầu kỳ" = opening_balance (số dư gốc, nhập tay 1 lần trong Danh mục Quỹ)
+// cộng dồn mọi phát sinh TRƯỚC ngày "from" — tức số dư luỹ kế tính đến ngay trước đầu kỳ đang xem.
+// Khi KHÔNG lọc ngày (from/to rỗng): "Đầu kỳ" = opening_balance gốc, Tổng thu/chi = toàn bộ từ
+// trước tới nay — giữ nguyên hành vi cũ (không phá vỡ màn hình hiện tại khi chưa dùng bộ lọc).
 router.get('/so-quy', (req, res) => {
+  const { from, to } = req.query;
   const methods = db.prepare(`SELECT * FROM payment_methods ORDER BY name`).all();
   const result = methods.map((pm) => {
-    const thu =
-      db
-        .prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE payment_method_id = ?`)
-        .get(pm.id).t || 0;
+    // Luỹ kế thu/chi trước "from" để dồn vào Đầu kỳ (bỏ qua nếu không lọc ngày).
+    const thuTruocKy = from
+      ? db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE payment_method_id = ? AND ngay_ct < ?`).get(pm.id, from).t || 0
+      : 0;
+    const chiTruocKy = from
+      ? db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments WHERE payment_method_id = ? AND ngay_ct < ?`).get(pm.id, from).t || 0
+      : 0;
+    const dau_ky = pm.opening_balance + thuTruocKy - chiTruocKy;
+
     // Lưu ý (v2): khi chi phí lô hàng được đánh dấu "đã thanh toán" (hoặc cước được tick "đã thu"),
     // hệ thống tự sinh 1 bản ghi auto_generated=1 trong supplier_payments/customer_receipts (xem
     // regenerateAutoVouchers trong routes/shipments.js) — nên chỉ cần tính tổng từ 2 bảng này để
     // tránh đếm trùng với shipment_charges.
-    const chi =
-      db
-        .prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments WHERE payment_method_id = ?`)
-        .get(pm.id).t || 0;
+    let thuSql = `SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE payment_method_id = ?`;
+    let chiSql = `SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments WHERE payment_method_id = ?`;
+    const thuParams = [pm.id];
+    const chiParams = [pm.id];
+    if (from) { thuSql += ' AND ngay_ct >= ?'; chiSql += ' AND ngay_ct >= ?'; thuParams.push(from); chiParams.push(from); }
+    if (to) { thuSql += ' AND ngay_ct <= ?'; chiSql += ' AND ngay_ct <= ?'; thuParams.push(to); chiParams.push(to); }
+    const thu = db.prepare(thuSql).get(...thuParams).t || 0;
+    const chi = db.prepare(chiSql).get(...chiParams).t || 0;
+
     return {
       ...pm,
+      dau_ky,
       thu,
       chi,
-      ton_cuoi: pm.opening_balance + thu - chi,
+      ton_cuoi: dau_ky + thu - chi,
     };
   });
   res.json(result);
@@ -349,30 +366,37 @@ router.get('/so-quy', (req, res) => {
 
 router.get('/so-quy/:pm_id/chi-tiet', (req, res) => {
   const { pm_id } = req.params;
-  const receipts = db
-    .prepare(
-      `SELECT r.id, r.so_ct, r.ngay_ct, c.name as doi_tuong, r.ghi_chu, r.so_tien as thu, 0 as chi
+  const { from, to } = req.query;
+  let receiptSql = `SELECT r.id, r.so_ct, r.ngay_ct, c.name as doi_tuong, r.ghi_chu, r.so_tien as thu, 0 as chi
        FROM customer_receipts r LEFT JOIN customers c ON c.id = r.customer_id
-       WHERE r.payment_method_id = ?`
-    )
-    .all(pm_id);
-  const payments = db
-    .prepare(
-      `SELECT p.id, p.so_ct, p.ngay_ct, sup.name as doi_tuong, p.ghi_chu, 0 as thu, p.so_tien as chi
+       WHERE r.payment_method_id = ?`;
+  let paymentSql = `SELECT p.id, p.so_ct, p.ngay_ct, sup.name as doi_tuong, p.ghi_chu, 0 as thu, p.so_tien as chi
        FROM supplier_payments p LEFT JOIN suppliers sup ON sup.id = p.supplier_id
-       WHERE p.payment_method_id = ?`
-    )
-    .all(pm_id);
+       WHERE p.payment_method_id = ?`;
+  const receiptParams = [pm_id];
+  const paymentParams = [pm_id];
+  if (from) { receiptSql += ' AND r.ngay_ct >= ?'; paymentSql += ' AND p.ngay_ct >= ?'; receiptParams.push(from); paymentParams.push(from); }
+  if (to) { receiptSql += ' AND r.ngay_ct <= ?'; paymentSql += ' AND p.ngay_ct <= ?'; receiptParams.push(to); paymentParams.push(to); }
+  const receipts = db.prepare(receiptSql).all(...receiptParams);
+  const payments = db.prepare(paymentSql).all(...paymentParams);
   const all = [...receipts, ...payments].sort((a, b) =>
     (a.ngay_ct || '').localeCompare(b.ngay_ct || '')
   );
   const pm = db.prepare(`SELECT * FROM payment_methods WHERE id = ?`).get(pm_id);
-  let running = pm ? pm.opening_balance : 0;
+  // Đầu kỳ của chi tiết: giống hệt cách tính ở /so-quy (opening_balance + luỹ kế trước "from").
+  const thuTruocKy = from && pm
+    ? db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE payment_method_id = ? AND ngay_ct < ?`).get(pm_id, from).t || 0
+    : 0;
+  const chiTruocKy = from && pm
+    ? db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments WHERE payment_method_id = ? AND ngay_ct < ?`).get(pm_id, from).t || 0
+    : 0;
+  const dau_ky = (pm ? pm.opening_balance : 0) + thuTruocKy - chiTruocKy;
+  let running = dau_ky;
   const withRunning = all.map((r) => {
     running += r.thu - r.chi;
     return { ...r, ton_cuoi: running };
   });
-  res.json(withRunning);
+  res.json({ dau_ky, rows: withRunning, ton_cuoi: running });
 });
 
 // ================= DOANH THU (theo lô hàng) =================

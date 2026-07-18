@@ -20,3 +20,10 @@ body {
   background: #fffbe6 !important;
   font-weight: 600;
 }
+
+/* Dòng "Số dư đầu kỳ" ghim đầu bảng Sổ quỹ chi tiết, giống sổ chi tiết tài khoản ngân hàng MISA */
+.so-quy-opening-row > td {
+  background: #f0f5ff !important;
+  font-weight: 600;
+  font-style: italic;
+}

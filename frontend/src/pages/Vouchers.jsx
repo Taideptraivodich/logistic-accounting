@@ -4,7 +4,7 @@ import {
   Tabs, Table, Button, Modal, Form, Select, InputNumber, DatePicker,
   Input, Space, Popconfirm, message, Radio, Tag,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, CopyOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
@@ -128,6 +128,25 @@ function VoucherTable({
     setModalOpen(true);
   };
 
+  // Nhân bản phiếu: mở modal "Tạo phiếu" (không phải Sửa — editing=null nên Lưu sẽ POST tạo mới,
+  // backend tự sinh Số CT mới) với dữ liệu điền sẵn giống phiếu gốc. Ngày chứng từ mặc định là
+  // hôm nay (trường hợp dùng phổ biến nhất: lặp lại 1 khoản thu/chi tương tự cho lần phát sinh
+  // mới) — Senior vẫn sửa lại ngày/số tiền/nội dung tự do trước khi Lưu.
+  const openDuplicate = (r) => {
+    setEditing(null);
+    setTargetType(r.category_id ? 'category' : 'owner');
+    form.setFieldsValue({
+      [ownerField]: r[ownerField],
+      category_id: r.category_id,
+      shipment_id: r.shipment_id,
+      ngay_ct: dayjs(),
+      so_tien: r.so_tien,
+      payment_method_id: r.payment_method_id,
+      ghi_chu: r.ghi_chu,
+    });
+    setModalOpen(true);
+  };
+
   const handleSave = async () => {
     try {
       const v = await form.validateFields();
@@ -191,9 +210,10 @@ function VoucherTable({
       width: 90,
       render: (_, r) => (
         <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} title="Sửa" />
+          <Button size="small" icon={<CopyOutlined />} onClick={() => openDuplicate(r)} title="Nhân bản" />
           <Popconfirm title="Xoá phiếu này?" onConfirm={() => handleDelete(r.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
+            <Button size="small" danger icon={<DeleteOutlined />} title="Xoá" />
           </Popconfirm>
         </Space>
       ),
