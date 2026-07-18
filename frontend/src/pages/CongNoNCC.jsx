@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Drawer, Button, Modal, Form, Select, InputNumber, DatePicker, Input, message, Space, Typography, Empty } from 'antd';
+import { Table, Drawer, Button, Modal, Form, Select, InputNumber, DatePicker, Input, message, Space, Typography, Empty, Tag } from 'antd';
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -43,6 +43,23 @@ export default function CongNoNCC() {
       .get(`/reports/cong-no-ncc/${r.id}/theo-thang`)
       .then((res) => setDetailData(res.data))
       .finally(() => setDetailLoading(false));
+  };
+
+  // Lưu ghi chú tự do / đánh dấu "nợ xấu" cho 1 dòng tháng — kiểu Excel gốc.
+  const saveNote = async (monthKey, patch) => {
+    if (!detail) return;
+    const current = (detailData?.rows || []).find((r) => r.key === monthKey) || {};
+    const ghi_chu = patch.ghi_chu !== undefined ? patch.ghi_chu : current.ghi_chu;
+    const la_no_xau = patch.la_no_xau !== undefined ? patch.la_no_xau : current.la_no_xau;
+    setDetailData((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) => (r.key === monthKey ? { ...r, ghi_chu, la_no_xau } : r)),
+    }));
+    try {
+      await api.put(`/reports/cong-no-ncc/${detail.id}/notes/${monthKey}`, { ghi_chu, la_no_xau });
+    } catch {
+      message.error('Không lưu được ghi chú');
+    }
   };
 
   const handleCreatePayment = async () => {
@@ -106,7 +123,7 @@ export default function CongNoNCC() {
   ];
 
   const monthColumns = [
-    { title: 'Tháng phát sinh', dataIndex: 'nhan', width: 140 },
+    { title: 'Tháng phát sinh', dataIndex: 'nhan', width: 130 },
     {
       title: 'Cước vận chuyển',
       dataIndex: 'cuoc_van_chuyen',
@@ -136,6 +153,37 @@ export default function CongNoNCC() {
       dataIndex: 'con_no',
       align: 'right',
       render: (v) => <span className={`money ${moneyClass(v)}`}>{formatMoney(v)}</span>,
+    },
+    {
+      title: 'Ghi chú',
+      dataIndex: 'ghi_chu',
+      width: 220,
+      render: (v, r) => (
+        <Typography.Text
+          editable={{
+            onChange: (val) => saveNote(r.key, { ghi_chu: val }),
+            autoSize: { minRows: 1, maxRows: 3 },
+          }}
+          style={{ fontSize: 12 }}
+        >
+          {v || ''}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Nợ xấu',
+      dataIndex: 'la_no_xau',
+      width: 80,
+      align: 'center',
+      render: (v, r) => (
+        <Tag
+          color={v ? 'red' : 'default'}
+          style={{ cursor: 'pointer' }}
+          onClick={() => saveNote(r.key, { la_no_xau: !v })}
+        >
+          {v ? 'Nợ xấu' : 'Đánh dấu'}
+        </Tag>
+      ),
     },
   ];
 
@@ -203,10 +251,12 @@ export default function CongNoNCC() {
           loading={detailLoading}
           pagination={false}
           size="small"
+          bordered
+          rowClassName={(r) => (r.la_no_xau ? 'row-no-xau' : '')}
           locale={{ emptyText: <Empty description="Chưa có chi phí nào phát sinh" /> }}
           summary={() =>
             detailData ? (
-              <Table.Summary.Row>
+              <Table.Summary.Row className="row-tong-cong-no">
                 <Table.Summary.Cell index={0}>
                   <b>Tổng nợ phải trả</b>
                 </Table.Summary.Cell>
@@ -221,6 +271,8 @@ export default function CongNoNCC() {
                 <Table.Summary.Cell index={5} align="right">
                   <b className={moneyClass(detailData.tong_con_no)}>{formatMoney(detailData.tong_con_no)}</b>
                 </Table.Summary.Cell>
+                <Table.Summary.Cell index={6} />
+                <Table.Summary.Cell index={7} />
               </Table.Summary.Row>
             ) : null
           }

@@ -65,4 +65,48 @@ router.post('/payment-methods', pmCrud.create);
 router.put('/payment-methods/:id', pmCrud.update);
 router.delete('/payment-methods/:id', pmCrud.remove);
 
+// ================= DANH MỤC THU/CHI KHÁC =================
+// Dùng cho phiếu thu/chi không gắn khách hàng / NCC cụ thể (chi in hồ sơ, mua văn phòng phẩm...).
+// Lọc theo ?type=thu|chi khi liệt kê; khi tạo mới phải truyền type trong body.
+router.get('/voucher-categories', (req, res) => {
+  const { type } = req.query;
+  if (type) {
+    res.json(db.prepare(`SELECT * FROM voucher_categories WHERE type = ? ORDER BY name`).all(type));
+  } else {
+    res.json(db.prepare(`SELECT * FROM voucher_categories ORDER BY type, name`).all());
+  }
+});
+router.post('/voucher-categories', (req, res) => {
+  const { name, type } = req.body;
+  if (!name || !['thu', 'chi'].includes(type)) {
+    return res.status(400).json({ error: 'Thiếu tên hoặc loại danh mục (thu/chi) không hợp lệ' });
+  }
+  try {
+    const info = db.prepare(`INSERT INTO voucher_categories (name, type) VALUES (?, ?)`).run(name, type);
+    res.json(db.prepare(`SELECT * FROM voucher_categories WHERE id = ?`).get(info.lastInsertRowid));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+router.put('/voucher-categories/:id', (req, res) => {
+  const { name, type } = req.body;
+  if (!name || !['thu', 'chi'].includes(type)) {
+    return res.status(400).json({ error: 'Thiếu tên hoặc loại danh mục (thu/chi) không hợp lệ' });
+  }
+  try {
+    db.prepare(`UPDATE voucher_categories SET name = ?, type = ? WHERE id = ?`).run(name, type, req.params.id);
+    res.json(db.prepare(`SELECT * FROM voucher_categories WHERE id = ?`).get(req.params.id));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+router.delete('/voucher-categories/:id', (req, res) => {
+  try {
+    db.prepare(`DELETE FROM voucher_categories WHERE id = ?`).run(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: 'Không thể xoá (đang được sử dụng ở phiếu khác).' });
+  }
+});
+
 module.exports = router;

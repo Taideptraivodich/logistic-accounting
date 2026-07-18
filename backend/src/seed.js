@@ -20,6 +20,13 @@ const feeTypes = [
   "Phí CSHT", "Phí hạ", "Phí nâng", "Phí ra vào cổng", "Phí vận chuyển", "Thuế",
 ];
 
+// Danh mục thu/chi KHÁC — không gắn khách hàng / NCC cụ thể (dùng trong màn Phiếu thu/chi).
+const voucherCategoriesChi = [
+  "Chi in hồ sơ", "Chi mua văn phòng phẩm", "Chi tiếp khách", "Chi xăng xe",
+  "Chi lương/thưởng", "Chi thuê văn phòng", "Chi khác",
+];
+const voucherCategoriesThu = ["Thu khác"];
+
 const paymentMethods = [
   ["HHA", 7088655],
   ["NGỌC", -1609829],
@@ -31,6 +38,7 @@ const insCustomer = db.prepare(
 );
 const insSupplier = db.prepare(`INSERT OR IGNORE INTO suppliers (name) VALUES (?)`);
 const insFeeType = db.prepare(`INSERT OR IGNORE INTO fee_types (name) VALUES (?)`);
+const insVoucherCat = db.prepare(`INSERT OR IGNORE INTO voucher_categories (name, type) VALUES (?, ?)`);
 const insPM = db.prepare(
   `INSERT OR IGNORE INTO payment_methods (name, opening_balance) VALUES (?, ?)`
 );
@@ -39,6 +47,8 @@ const seed = db.transaction(() => {
   for (const [name, cuoc] of customers) insCustomer.run(name, cuoc);
   for (const name of suppliers) insSupplier.run(name);
   for (const name of feeTypes) insFeeType.run(name);
+  for (const name of voucherCategoriesChi) insVoucherCat.run(name, 'chi');
+  for (const name of voucherCategoriesThu) insVoucherCat.run(name, 'thu');
   for (const [name, bal] of paymentMethods) insPM.run(name, bal);
 });
 

@@ -4,7 +4,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
-function GenericCatalog({ endpoint, title, extraFields }) {
+function GenericCatalog({ endpoint, title, extraFields, listQuery, fixedFields }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
@@ -20,7 +20,7 @@ function GenericCatalog({ endpoint, title, extraFields }) {
 
   const load = () => {
     setLoading(true);
-    api.get(`/${endpoint}`).then((res) => setRows(res.data)).finally(() => setLoading(false));
+    api.get(`/${endpoint}`, { params: listQuery }).then((res) => setRows(res.data)).finally(() => setLoading(false));
   };
 
   useEffect(load, []);
@@ -40,11 +40,12 @@ function GenericCatalog({ endpoint, title, extraFields }) {
   const handleSave = async () => {
     try {
       const v = await form.validateFields();
+      const payload = { ...v, ...fixedFields };
       if (editing) {
-        await api.put(`/${endpoint}/${editing.id}`, v);
+        await api.put(`/${endpoint}/${editing.id}`, payload);
         message.success('Đã cập nhật');
       } else {
-        await api.post(`/${endpoint}`, v);
+        await api.post(`/${endpoint}`, payload);
         message.success('Đã thêm mới');
       }
       setModalOpen(false);
@@ -173,6 +174,32 @@ export default function Catalog() {
           endpoint="payment-methods"
           title="Hình thức thanh toán"
           extraFields={[{ name: 'opening_balance', label: 'Số dư đầu kỳ', type: 'number' }]}
+        />
+      ),
+    },
+    {
+      key: 'voucher-cats-thu',
+      label: 'Danh mục thu khác',
+      children: (
+        <GenericCatalog
+          endpoint="voucher-categories"
+          title="Danh mục thu khác"
+          extraFields={[]}
+          listQuery={{ type: 'thu' }}
+          fixedFields={{ type: 'thu' }}
+        />
+      ),
+    },
+    {
+      key: 'voucher-cats-chi',
+      label: 'Danh mục chi khác',
+      children: (
+        <GenericCatalog
+          endpoint="voucher-categories"
+          title="Danh mục chi khác"
+          extraFields={[]}
+          listQuery={{ type: 'chi' }}
+          fixedFields={{ type: 'chi' }}
         />
       ),
     },

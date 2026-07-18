@@ -38,6 +38,14 @@ function getShipmentFull(id) {
   const tong_chi_phi = charges.reduce((a, c) => a + (c.so_tien || 0), 0);
   const tong_chi_ho = charges.reduce((a, c) => a + (c.la_chi_ho ? c.so_tien || 0 : 0), 0);
   const doanh_thu = (shipment.cuoc_dv || 0) + tong_chi_ho;
+  // Phiếu thu/chi liên kết lô hàng này (tạo tay ở màn Phiếu thu/chi) — hiển thị để Senior biết
+  // đã thu/chi tiền cho lô này chưa, không phải để tính lại công thức trên.
+  const linked_receipts = db
+    .prepare(`SELECT * FROM customer_receipts WHERE shipment_id = ? ORDER BY id`)
+    .all(id);
+  const linked_payments = db
+    .prepare(`SELECT * FROM supplier_payments WHERE shipment_id = ? ORDER BY id`)
+    .all(id);
   return {
     ...shipment,
     charges,
@@ -45,6 +53,8 @@ function getShipmentFull(id) {
     tong_chi_ho,
     doanh_thu,
     loi_nhuan: doanh_thu - tong_chi_phi,
+    linked_receipts,
+    linked_payments,
   };
 }
 
@@ -135,29 +145,11 @@ router.post('/', (req, res) => {
       );
     }
 
-    // Nếu tick "thu ngay" -> tự tạo 1 phiếu thu khách hàng tương ứng cước dịch vụ
-    if (cuoc_thu_ngay && cuoc_dv) {
-      const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
-      db.prepare(
-        `INSERT INTO customer_receipts (so_ct, customer_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu)
-         VALUES (?,?,?,?,?,?,?)`
-      ).run(so_ct, customer_id, shipmentId, ngayCtHieuLuc, cuoc_dv, cuoc_payment_method_id || null, 'Thu cước lô ' + ma_lo);
-    }
-
-    // Chi phí nào đánh dấu "đã thanh toán" -> tự tạo phiếu chi NCC tương ứng
-    const insPay = db.prepare(
-      `INSERT INTO supplier_payments (so_ct, supplier_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu)
-       VALUES (?,?,?,?,?,?,?)`
-    );
-    for (const c of charges) {
-      if (c.da_thanh_toan && c.supplier_id && c.so_tien) {
-        const so_ct = nextCode('PC', 'supplier_payments', 'so_ct');
-        insPay.run(
-          so_ct, c.supplier_id, shipmentId, c.ngay_ct || ngayCtHieuLuc,
-          c.so_tien, c.payment_method_id || null, 'Chi ' + (c.loai_phi || '') + ' lô ' + ma_lo
-        );
-      }
-    }
+    // GHI CHÚ: từ đợt này KHÔNG còn tự sinh phiếu thu/phiếu chi khi lưu lô hàng nữa —
+    // tránh tình trạng phiếu tự sinh không đồng bộ lại khi sửa lô hàng sau đó (đã ghi trong
+    // AI_HANDOVER trước). "Đã thu cước ngay" / "Đã thanh toán?" giờ chỉ là cờ trạng thái
+    // để Senior theo dõi, còn phiếu thu/chi thật phải tạo tay ở màn "Phiếu thu / chi" (có thể
+    // chọn "Lô hàng liên kết" để gắn về lô này).
 
     return shipmentId;
   });

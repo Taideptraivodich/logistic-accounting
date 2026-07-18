@@ -62,11 +62,24 @@ CREATE TABLE IF NOT EXISTS shipment_charges (
   ghi_chu TEXT
 );
 
--- ================= PHIẾU THU KHÁCH HÀNG =================
+-- ================= DANH MỤC THU/CHI KHÁC (không gắn khách hàng / NCC) =================
+-- Dùng cho các khoản thu/chi không thuộc về 1 khách hàng hay 1 NCC cụ thể,
+-- ví dụ: chi in hồ sơ, chi mua văn phòng phẩm, chi tiếp khách, thu khác...
+CREATE TABLE IF NOT EXISTS voucher_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('thu','chi')),
+  UNIQUE(name, type)
+);
+
+-- ================= PHIẾU THU KHÁCH HÀNG (hoặc thu khác) =================
+-- customer_id NULL khi đây là 1 khoản "thu khác" (category_id) không gắn khách hàng cụ thể.
+-- KHÔNG còn tự sinh từ lô hàng — Senior tạo tay tại màn Phiếu thu / chi.
 CREATE TABLE IF NOT EXISTS customer_receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   so_ct TEXT NOT NULL UNIQUE,
-  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  customer_id INTEGER REFERENCES customers(id),
+  category_id INTEGER REFERENCES voucher_categories(id),
   shipment_id INTEGER REFERENCES shipments(id) ON DELETE SET NULL,
   ngay_ct TEXT,
   so_tien REAL DEFAULT 0,
@@ -75,15 +88,31 @@ CREATE TABLE IF NOT EXISTS customer_receipts (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
--- ================= PHIẾU CHI NHÀ CUNG CẤP =================
+-- ================= PHIẾU CHI NHÀ CUNG CẤP (hoặc chi khác) =================
+-- supplier_id NULL khi đây là 1 khoản "chi khác" (category_id), ví dụ chi in hồ sơ,
+-- mua văn phòng phẩm... KHÔNG còn tự sinh từ lô hàng — Senior tạo tay tại màn Phiếu thu / chi.
 CREATE TABLE IF NOT EXISTS supplier_payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   so_ct TEXT NOT NULL UNIQUE,
-  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+  supplier_id INTEGER REFERENCES suppliers(id),
+  category_id INTEGER REFERENCES voucher_categories(id),
   shipment_id INTEGER REFERENCES shipments(id) ON DELETE SET NULL,
   ngay_ct TEXT,
   so_tien REAL DEFAULT 0,
   payment_method_id INTEGER REFERENCES payment_methods(id),
   ghi_chu TEXT,
   created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- ================= GHI CHÚ CÔNG NỢ THEO THÁNG (kiểu Excel) =================
+-- Cho phép Senior gõ chú thích tự do cho từng dòng "tháng phát sinh" trong bảng công nợ
+-- KH/NCC (ví dụ "TT tiền hàng + chi hộ ngày 14/01/2026"), và đánh dấu "nợ xấu" để tô đỏ dòng.
+CREATE TABLE IF NOT EXISTS cong_no_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doi_tuong_type TEXT NOT NULL CHECK(doi_tuong_type IN ('kh','ncc')),
+  doi_tuong_id INTEGER NOT NULL,
+  month_key TEXT NOT NULL,             -- 'YYYY-MM' hoặc '__no_date__'
+  ghi_chu TEXT,
+  la_no_xau INTEGER DEFAULT 0,
+  UNIQUE(doi_tuong_type, doi_tuong_id, month_key)
 );

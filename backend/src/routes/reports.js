@@ -127,11 +127,24 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
 
   let pool = tong_da_thu;
   let tong_phai_thu = 0;
+  const noteMap = new Map(
+    db
+      .prepare(`SELECT month_key, ghi_chu, la_no_xau FROM cong_no_notes WHERE doi_tuong_type = 'kh' AND doi_tuong_id = ?`)
+      .all(customer_id)
+      .map((n) => [n.month_key, n])
+  );
   const rows = months.map((m) => {
     const da_thu = Math.min(pool, m.phat_sinh);
     pool -= da_thu;
     tong_phai_thu += m.phat_sinh;
-    return { ...m, da_thu, con_no: m.phat_sinh - da_thu };
+    const note = noteMap.get(m.key);
+    return {
+      ...m,
+      da_thu,
+      con_no: m.phat_sinh - da_thu,
+      ghi_chu: note?.ghi_chu || '',
+      la_no_xau: !!note?.la_no_xau,
+    };
   });
 
   const receipts = db
@@ -149,6 +162,19 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
     tong_con_no: tong_phai_thu - tong_da_thu,
     receipts,
   });
+});
+
+// Lưu ghi chú / đánh dấu "nợ xấu" cho 1 dòng tháng phát sinh trong bảng công nợ KH — kiểu Excel
+// (Senior gõ chú thích tự do như "TT tiền hàng + chi hộ ngày 14/01/2026").
+router.put('/cong-no-kh/:customer_id/notes/:month_key', (req, res) => {
+  const { customer_id, month_key } = req.params;
+  const { ghi_chu, la_no_xau } = req.body;
+  db.prepare(
+    `INSERT INTO cong_no_notes (doi_tuong_type, doi_tuong_id, month_key, ghi_chu, la_no_xau)
+     VALUES ('kh', ?, ?, ?, ?)
+     ON CONFLICT(doi_tuong_type, doi_tuong_id, month_key) DO UPDATE SET ghi_chu = excluded.ghi_chu, la_no_xau = excluded.la_no_xau`
+  ).run(customer_id, month_key, ghi_chu || null, la_no_xau ? 1 : 0);
+  res.json({ ok: true });
 });
 
 // ================= CÔNG NỢ NHÀ CUNG CẤP =================
@@ -246,11 +272,24 @@ router.get('/cong-no-ncc/:supplier_id/theo-thang', (req, res) => {
 
   let pool = tong_da_tra;
   let tong_phai_tra = 0;
+  const noteMapNcc = new Map(
+    db
+      .prepare(`SELECT month_key, ghi_chu, la_no_xau FROM cong_no_notes WHERE doi_tuong_type = 'ncc' AND doi_tuong_id = ?`)
+      .all(supplier_id)
+      .map((n) => [n.month_key, n])
+  );
   const rows = months.map((m) => {
     const da_tra = Math.min(pool, m.phat_sinh);
     pool -= da_tra;
     tong_phai_tra += m.phat_sinh;
-    return { ...m, da_tra, con_no: m.phat_sinh - da_tra };
+    const note = noteMapNcc.get(m.key);
+    return {
+      ...m,
+      da_tra,
+      con_no: m.phat_sinh - da_tra,
+      ghi_chu: note?.ghi_chu || '',
+      la_no_xau: !!note?.la_no_xau,
+    };
   });
 
   const payments = db
@@ -268,6 +307,18 @@ router.get('/cong-no-ncc/:supplier_id/theo-thang', (req, res) => {
     tong_con_no: tong_phai_tra - tong_da_tra,
     payments,
   });
+});
+
+// Lưu ghi chú / đánh dấu "nợ xấu" cho 1 dòng tháng phát sinh trong bảng công nợ NCC.
+router.put('/cong-no-ncc/:supplier_id/notes/:month_key', (req, res) => {
+  const { supplier_id, month_key } = req.params;
+  const { ghi_chu, la_no_xau } = req.body;
+  db.prepare(
+    `INSERT INTO cong_no_notes (doi_tuong_type, doi_tuong_id, month_key, ghi_chu, la_no_xau)
+     VALUES ('ncc', ?, ?, ?, ?)
+     ON CONFLICT(doi_tuong_type, doi_tuong_id, month_key) DO UPDATE SET ghi_chu = excluded.ghi_chu, la_no_xau = excluded.la_no_xau`
+  ).run(supplier_id, month_key, ghi_chu || null, la_no_xau ? 1 : 0);
+  res.json({ ok: true });
 });
 
 // ================= SỔ QUỸ (theo hình thức thanh toán) =================

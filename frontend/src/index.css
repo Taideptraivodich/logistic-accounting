@@ -11,3 +11,12 @@ body {
 }
 .money-pos { color: #2f9e44; }
 .money-neg { color: #e03131; }
+
+/* Kiểu Excel cho bảng công nợ theo tháng: dòng "nợ xấu" tô đỏ nhạt, dòng tổng cộng tô vàng */
+.row-no-xau > td {
+  background: #fff1f0 !important;
+}
+.row-tong-cong-no > td {
+  background: #fffbe6 !important;
+  font-weight: 600;
+}

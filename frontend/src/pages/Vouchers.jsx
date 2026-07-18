@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Tabs, Table, Button, Modal, Form, Select, InputNumber, DatePicker,
-  Input, Space, Popconfirm, message,
+  Input, Space, Popconfirm, message, Radio,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -16,8 +16,14 @@ const moneyProps = {
   parser: (v) => (v ? v.replace(/,/g, '') : ''),
 };
 
-function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMethods, shipments, presetOwnerId, presetPaymentMethodId }) {
-  // kind: 'receipts' | 'payments'
+// kind: 'receipts' | 'payments'. Mỗi phiếu giờ có thể gắn với 1 trong 2 dạng đối tượng:
+//  - "owner" (Khách hàng cho phiếu thu / Nhà cung cấp cho phiếu chi), HOẶC
+//  - "category" (danh mục thu/chi khác — chi in hồ sơ, mua văn phòng phẩm, thu khác...)
+// không nhất thiết phải là thu KH / chi NCC như trước.
+function VoucherTable({
+  kind, ownerOptions, ownerField, ownerLabel, categoryOptions,
+  paymentMethods, shipments, presetOwnerId, presetPaymentMethodId,
+}) {
   const isThu = kind === 'receipts';
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,6 +32,7 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
   const [pmFilter, setPmFilter] = useState(presetPaymentMethodId ? Number(presetPaymentMethodId) : undefined);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [targetType, setTargetType] = useState('owner'); // 'owner' | 'category'
   const [form] = Form.useForm();
 
   const load = () => {
@@ -48,7 +55,7 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
     if (!q.trim()) return rows;
     const like = q.trim().toLowerCase();
     return rows.filter((r) =>
-      [r.so_ct, r.ghi_chu, r.ma_lo, isThu ? r.customer_name : r.supplier_name]
+      [r.so_ct, r.ghi_chu, r.ma_lo, isThu ? r.customer_name : r.supplier_name, r.category_name]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(like))
     );
@@ -56,6 +63,7 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
 
   const openNew = () => {
     setEditing(null);
+    setTargetType('owner');
     form.resetFields();
     form.setFieldsValue({ ngay_ct: dayjs(), [ownerField]: ownerFilter });
     setModalOpen(true);
@@ -63,8 +71,10 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
 
   const openEdit = (r) => {
     setEditing(r);
+    setTargetType(r.category_id ? 'category' : 'owner');
     form.setFieldsValue({
       [ownerField]: r[ownerField],
+      category_id: r.category_id,
       shipment_id: r.shipment_id,
       ngay_ct: r.ngay_ct ? dayjs(r.ngay_ct) : null,
       so_tien: r.so_tien,
@@ -77,7 +87,12 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
   const handleSave = async () => {
     try {
       const v = await form.validateFields();
-      const payload = { ...v, ngay_ct: v.ngay_ct ? v.ngay_ct.format('YYYY-MM-DD') : null };
+      const payload = {
+        ...v,
+        ngay_ct: v.ngay_ct ? v.ngay_ct.format('YYYY-MM-DD') : null,
+        [ownerField]: targetType === 'owner' ? v[ownerField] : null,
+        category_id: targetType === 'category' ? v.category_id : null,
+      };
       if (editing) {
         await api.put(`/vouchers/${kind}/${editing.id}`, payload);
         message.success('Đã cập nhật phiếu');
@@ -101,7 +116,16 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
   const columns = [
     { title: 'Số CT', dataIndex: 'so_ct', width: 110 },
     { title: 'Ngày CT', dataIndex: 'ngay_ct', width: 100 },
-    { title: ownerLabel, dataIndex: isThu ? 'customer_name' : 'supplier_name', width: 170 },
+    {
+      title: 'Đối tượng',
+      width: 190,
+      render: (_, r) =>
+        r.category_id ? (
+          <span style={{ color: '#8c8c8c' }}>{r.category_name} <i>(khác)</i></span>
+        ) : (
+          isThu ? r.customer_name : r.supplier_name
+        ),
+    },
     { title: 'Mã lô liên kết', dataIndex: 'ma_lo', width: 110, render: (v) => v || <span style={{ color: '#999' }}>—</span> },
     {
       title: 'Số tiền',
@@ -169,9 +193,36 @@ function VoucherTable({ kind, ownerOptions, ownerField, ownerLabel, paymentMetho
         okText="Lưu"
       >
         <Form form={form} layout="vertical">
-          <Form.Item label={ownerLabel} name={ownerField} rules={[{ required: true, message: `Vui lòng chọn ${ownerLabel.toLowerCase()}` }]}>
-            <Select options={ownerOptions} showSearch optionFilterProp="label" />
+          <Form.Item label="Loại đối tượng">
+            <Radio.Group value={targetType} onChange={(e) => setTargetType(e.target.value)}>
+              <Radio.Button value="owner">{ownerLabel}</Radio.Button>
+              <Radio.Button value="category">{isThu ? 'Thu khác' : 'Chi khác'}</Radio.Button>
+            </Radio.Group>
           </Form.Item>
+
+          {targetType === 'owner' ? (
+            <Form.Item
+              label={ownerLabel}
+              name={ownerField}
+              rules={[{ required: targetType === 'owner', message: `Vui lòng chọn ${ownerLabel.toLowerCase()}` }]}
+            >
+              <Select options={ownerOptions} showSearch optionFilterProp="label" />
+            </Form.Item>
+          ) : (
+            <Form.Item
+              label={isThu ? 'Danh mục thu khác' : 'Danh mục chi khác'}
+              name="category_id"
+              rules={[{ required: targetType === 'category', message: 'Vui lòng chọn danh mục' }]}
+            >
+              <Select
+                options={categoryOptions}
+                showSearch
+                optionFilterProp="label"
+                placeholder={isThu ? 'VD: Thu khác' : 'VD: Chi in hồ sơ, Chi mua văn phòng phẩm...'}
+              />
+            </Form.Item>
+          )}
+
           <Form.Item label="Lô hàng liên kết (không bắt buộc)" name="shipment_id">
             <Select
               allowClear
@@ -203,12 +254,16 @@ export default function Vouchers() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [categoriesThu, setCategoriesThu] = useState([]);
+  const [categoriesChi, setCategoriesChi] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [shipments, setShipments] = useState([]);
 
   useEffect(() => {
     api.get('/customers').then((res) => setCustomers(res.data));
     api.get('/suppliers').then((res) => setSuppliers(res.data));
+    api.get('/voucher-categories', { params: { type: 'thu' } }).then((res) => setCategoriesThu(res.data));
+    api.get('/voucher-categories', { params: { type: 'chi' } }).then((res) => setCategoriesChi(res.data));
     api.get('/payment-methods').then((res) => setPaymentMethods(res.data));
     api.get('/shipments').then((res) => setShipments(res.data));
   }, []);
@@ -218,13 +273,14 @@ export default function Vouchers() {
   const items = [
     {
       key: 'thu',
-      label: 'Phiếu thu khách hàng',
+      label: 'Phiếu thu',
       children: (
         <VoucherTable
           kind="receipts"
           ownerField="customer_id"
           ownerLabel="Khách hàng"
           ownerOptions={customers.map((c) => ({ label: c.name, value: c.id }))}
+          categoryOptions={categoriesThu.map((c) => ({ label: c.name, value: c.id }))}
           paymentMethods={paymentMethods}
           shipments={shipments}
           presetOwnerId={searchParams.get('customer_id')}
@@ -234,13 +290,14 @@ export default function Vouchers() {
     },
     {
       key: 'chi',
-      label: 'Phiếu chi nhà cung cấp',
+      label: 'Phiếu chi',
       children: (
         <VoucherTable
           kind="payments"
           ownerField="supplier_id"
           ownerLabel="Nhà cung cấp"
           ownerOptions={suppliers.map((s) => ({ label: s.name, value: s.id }))}
+          categoryOptions={categoriesChi.map((c) => ({ label: c.name, value: c.id }))}
           paymentMethods={paymentMethods}
           shipments={shipments}
           presetOwnerId={searchParams.get('supplier_id')}

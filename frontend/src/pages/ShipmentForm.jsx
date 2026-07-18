@@ -35,6 +35,8 @@ export default function ShipmentForm() {
   const [charges, setCharges] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [addingSupplier, setAddingSupplier] = useState(false);
 
   // ---- Tải danh mục ----
   useEffect(() => {
@@ -119,6 +121,25 @@ export default function ShipmentForm() {
     setCharges((prev) => prev.filter((c) => c.key !== key));
   };
 
+  // Thêm nhanh NCC ngay trong dòng chi phí (vd nhà xe chở hàng chưa có trong danh mục) —
+  // để không phải chuyển qua màn Danh mục chỉ để thêm 1 NCC khi đang nhập chi hộ.
+  const quickAddSupplier = async (rowKey) => {
+    const name = newSupplierName.trim();
+    if (!name) return;
+    setAddingSupplier(true);
+    try {
+      const { data } = await api.post('/suppliers', { name });
+      setSuppliers((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+      updateCharge(rowKey, { supplier_id: data.id });
+      setNewSupplierName('');
+      message.success(`Đã thêm NCC "${name}"`);
+    } catch (e) {
+      message.error(e?.response?.data?.error || 'Không thêm được NCC (có thể tên đã tồn tại)');
+    } finally {
+      setAddingSupplier(false);
+    }
+  };
+
   // ---- Tính tổng trực tiếp (đồng bộ công thức mới: doanh thu = cước dv + chi hộ) ----
   const cuocDv = Form.useWatch('cuoc_dv', form) || 0;
   const tongChiPhi = useMemo(() => charges.reduce((a, c) => a + (Number(c.so_tien) || 0), 0), [charges]);
@@ -148,7 +169,7 @@ export default function ShipmentForm() {
     {
       title: 'Nhà cung cấp',
       dataIndex: 'supplier_id',
-      width: 170,
+      width: 190,
       render: (v, row) => (
         <Select
           value={v}
@@ -156,9 +177,32 @@ export default function ShipmentForm() {
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="Chọn NCC"
+          placeholder="Chọn hoặc thêm NCC"
           options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
           onChange={(val) => updateCharge(row.key, { supplier_id: val })}
+          dropdownRender={(menu) => (
+            <div>
+              {menu}
+              <div style={{ display: 'flex', gap: 4, padding: 8, borderTop: '1px solid #f0f0f0' }}>
+                <Input
+                  size="small"
+                  placeholder="Tên NCC mới..."
+                  value={newSupplierName}
+                  onChange={(e) => setNewSupplierName(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  onPressEnter={() => quickAddSupplier(row.key)}
+                />
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={addingSupplier}
+                  onClick={() => quickAddSupplier(row.key)}
+                >
+                  Thêm
+                </Button>
+              </div>
+            </div>
+          )}
         />
       ),
     },
@@ -171,9 +215,16 @@ export default function ShipmentForm() {
       ),
     },
     {
-      title: 'Đã thanh toán?',
+      title: (
+        <span>
+          Đã thanh toán?{' '}
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            (chỉ đánh dấu, không tự tạo phiếu chi)
+          </Typography.Text>
+        </span>
+      ),
       dataIndex: 'da_thanh_toan',
-      width: 110,
+      width: 130,
       align: 'center',
       render: (v, row) => (
         <Checkbox checked={v} onChange={(e) => updateCharge(row.key, { da_thanh_toan: e.target.checked })} />
@@ -321,15 +372,12 @@ export default function ShipmentForm() {
             <Form.Item label="Cước dịch vụ (Doanh thu)" name="cuoc_dv">
               <InputNumber {...moneyProps} />
             </Form.Item>
-            <Form.Item label="Quỹ thu cước" name="cuoc_payment_method_id">
+            <Form.Item label="Quỹ thu cước (dự kiến)" name="cuoc_payment_method_id" tooltip="Chỉ để ghi nhớ — không tự tạo phiếu thu. Vào màn 'Phiếu thu / chi' để tạo phiếu thu thật khi đã nhận tiền.">
               <Select
                 allowClear
                 placeholder="Chọn quỹ"
                 options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))}
               />
-            </Form.Item>
-            <Form.Item label=" " name="cuoc_thu_ngay" valuePropName="checked">
-              <Checkbox>Đã thu cước ngay (tự tạo phiếu thu)</Checkbox>
             </Form.Item>
             <Form.Item label="Ghi chú" name="ghi_chu" style={{ gridColumn: 'span 2' }}>
               <Input />
@@ -348,6 +396,12 @@ export default function ShipmentForm() {
           </Space>
 
           <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
+
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+            Lưu ý: lưu lô hàng KHÔNG tự tạo phiếu thu/phiếu chi. Vào menu "Phiếu thu / chi" để tạo
+            phiếu thật khi đã thu tiền khách hoặc đã chi tiền cho NCC (có thể chọn "Lô hàng liên kết"
+            để gắn về lô này).
+          </Typography.Text>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 32, marginTop: 16, flexWrap: 'wrap' }}>
             <span>
