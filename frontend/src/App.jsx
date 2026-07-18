@@ -20,6 +20,7 @@ import CongNoNCC from './pages/CongNoNCC.jsx';
 import SoQuy from './pages/SoQuy.jsx';
 import DoanhThu from './pages/DoanhThu.jsx';
 import Catalog from './pages/Catalog.jsx';
+import Vouchers from './pages/Vouchers.jsx';
 
 const { Header, Sider, Content } = Layout;
 
@@ -29,6 +30,7 @@ const menuItems = [
   { key: '/cong-no-kh', icon: <TeamOutlined />, label: 'Công nợ Khách hàng' },
   { key: '/cong-no-ncc', icon: <ShopOutlined />, label: 'Công nợ Nhà cung cấp' },
   { key: '/so-quy', icon: <WalletOutlined />, label: 'Sổ quỹ' },
+  { key: '/vouchers', icon: <FileTextOutlined />, label: 'Phiếu thu / chi' },
   { key: '/doanh-thu', icon: <BarChartOutlined />, label: 'Doanh thu' },
   { key: '/catalog', icon: <SettingOutlined />, label: 'Danh mục' },
 ];
@@ -90,6 +92,7 @@ function Shell() {
             <Route path="/cong-no-kh" element={<CongNoKH />} />
             <Route path="/cong-no-ncc" element={<CongNoNCC />} />
             <Route path="/so-quy" element={<SoQuy />} />
+            <Route path="/vouchers" element={<Vouchers />} />
             <Route path="/doanh-thu" element={<DoanhThu />} />
             <Route path="/catalog" element={<Catalog />} />
           </Routes>

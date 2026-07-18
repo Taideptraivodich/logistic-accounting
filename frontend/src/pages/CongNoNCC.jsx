@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { Table, Drawer, Button, Modal, Form, Select, InputNumber, DatePicker, Input, message } from 'antd';
-import { EyeOutlined, PlusOutlined } from '@ant-design/icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Table, Drawer, Button, Modal, Form, Select, InputNumber, DatePicker, Input, message, Space, Typography, Empty } from 'antd';
+import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../api/client';
 import { formatMoney, moneyClass } from '../utils/format';
@@ -8,12 +9,15 @@ import { formatMoney, moneyClass } from '../utils/format';
 export default function CongNoNCC() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
   const [detail, setDetail] = useState(null);
-  const [detailRows, setDetailRows] = useState([]);
+  const [detailData, setDetailData] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [form] = Form.useForm();
+  const navigate = useNavigate();
 
   const load = () => {
     setLoading(true);
@@ -26,9 +30,19 @@ export default function CongNoNCC() {
     api.get('/payment-methods').then((res) => setPaymentMethods(res.data));
   }, []);
 
+  const filteredRows = useMemo(() => {
+    if (!q.trim()) return rows;
+    const like = q.trim().toLowerCase();
+    return rows.filter((r) => (r.name || '').toLowerCase().includes(like));
+  }, [rows, q]);
+
   const openDetail = (r) => {
     setDetail(r);
-    api.get(`/reports/cong-no-ncc/${r.id}/chi-tiet`).then((res) => setDetailRows(res.data));
+    setDetailLoading(true);
+    api
+      .get(`/reports/cong-no-ncc/${r.id}/theo-thang`)
+      .then((res) => setDetailData(res.data))
+      .finally(() => setDetailLoading(false));
   };
 
   const handleCreatePayment = async () => {
@@ -50,6 +64,18 @@ export default function CongNoNCC() {
 
   const columns = [
     { title: 'Nhà cung cấp', dataIndex: 'name' },
+    {
+      title: 'Cước vận chuyển',
+      dataIndex: 'cuoc_van_chuyen',
+      align: 'right',
+      render: (v) => <span className="money">{formatMoney(v)}</span>,
+    },
+    {
+      title: 'Chi hộ',
+      dataIndex: 'chi_ho',
+      align: 'right',
+      render: (v) => <span className="money">{formatMoney(v)}</span>,
+    },
     {
       title: 'Phải trả',
       dataIndex: 'phai_tra',
@@ -79,51 +105,134 @@ export default function CongNoNCC() {
     },
   ];
 
-  const detailColumns = [
-    { title: 'Ngày CT', dataIndex: 'ngay_ct', width: 100 },
-    { title: 'Số CT / Mã lô', dataIndex: 'ma_lo', width: 120 },
-    { title: 'Nội dung', dataIndex: 'loai_phi' },
+  const monthColumns = [
+    { title: 'Tháng phát sinh', dataIndex: 'nhan', width: 140 },
     {
-      title: 'Phát sinh',
-      dataIndex: 'phai_tra',
+      title: 'Cước vận chuyển',
+      dataIndex: 'cuoc_van_chuyen',
       align: 'right',
-      render: (v) => <span className={`money ${moneyClass(v)}`}>{formatMoney(v)}</span>,
+      render: (v) => <span className="money">{formatMoney(v)}</span>,
     },
     {
-      title: 'Tồn cuối',
-      dataIndex: 'ton_cuoi',
+      title: 'Chi hộ',
+      dataIndex: 'chi_ho',
+      align: 'right',
+      render: (v) => <span className="money">{formatMoney(v)}</span>,
+    },
+    {
+      title: 'Phải trả',
+      dataIndex: 'phat_sinh',
+      align: 'right',
+      render: (v) => <span className="money">{formatMoney(v)}</span>,
+    },
+    {
+      title: 'Đã trả',
+      dataIndex: 'da_tra',
+      align: 'right',
+      render: (v) => <span className="money money-pos">{formatMoney(v)}</span>,
+    },
+    {
+      title: 'Còn nợ',
+      dataIndex: 'con_no',
       align: 'right',
       render: (v) => <span className={`money ${moneyClass(v)}`}>{formatMoney(v)}</span>,
     },
   ];
 
+  const paymentColumns = [
+    { title: 'Số CT', dataIndex: 'so_ct', width: 110 },
+    { title: 'Ngày', dataIndex: 'ngay_ct', width: 110 },
+    { title: 'Ghi chú', dataIndex: 'ghi_chu' },
+    {
+      title: 'Số tiền',
+      dataIndex: 'so_tien',
+      align: 'right',
+      render: (v) => <span className="money money-neg">{formatMoney(v)}</span>,
+    },
+  ];
+
   return (
     <div>
-      <Table rowKey="id" columns={columns} dataSource={rows} loading={loading} pagination={false} />
+      <Space style={{ marginBottom: 16 }}>
+        <Input
+          placeholder="Tìm nhà cung cấp..."
+          allowClear
+          style={{ width: 280 }}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          prefix={<SearchOutlined />}
+        />
+      </Space>
+      <Table rowKey="id" columns={columns} dataSource={filteredRows} loading={loading} pagination={false} />
 
       <Drawer
         title={`Chi tiết công nợ: ${detail?.name || ''}`}
-        width={720}
+        width={760}
         open={!!detail}
-        onClose={() => setDetail(null)}
+        onClose={() => {
+          setDetail(null);
+          setDetailData(null);
+        }}
         extra={
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              form.setFieldsValue({ supplier_id: detail?.id });
-              setModalOpen(true);
-            }}
-          >
-            Tạo phiếu chi
-          </Button>
+          <Space>
+            <Button
+              size="small"
+              icon={<UnorderedListOutlined />}
+              onClick={() => navigate(`/vouchers?tab=chi&supplier_id=${detail?.id}`)}
+            >
+              Quản lý phiếu chi
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                form.setFieldsValue({ supplier_id: detail?.id });
+                setModalOpen(true);
+              }}
+            >
+              Tạo phiếu chi
+            </Button>
+          </Space>
         }
       >
         <Table
-          rowKey="id"
-          columns={detailColumns}
-          dataSource={detailRows}
+          rowKey="key"
+          columns={monthColumns}
+          dataSource={detailData?.rows || []}
+          loading={detailLoading}
+          pagination={false}
+          size="small"
+          locale={{ emptyText: <Empty description="Chưa có chi phí nào phát sinh" /> }}
+          summary={() =>
+            detailData ? (
+              <Table.Summary.Row>
+                <Table.Summary.Cell index={0}>
+                  <b>Tổng nợ phải trả</b>
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={1} />
+                <Table.Summary.Cell index={2} />
+                <Table.Summary.Cell index={3} align="right">
+                  <b>{formatMoney(detailData.tong_phai_tra)}</b>
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={4} align="right">
+                  <b>{formatMoney(detailData.tong_da_tra)}</b>
+                </Table.Summary.Cell>
+                <Table.Summary.Cell index={5} align="right">
+                  <b className={moneyClass(detailData.tong_con_no)}>{formatMoney(detailData.tong_con_no)}</b>
+                </Table.Summary.Cell>
+              </Table.Summary.Row>
+            ) : null
+          }
+        />
+
+        <Typography.Title level={5} style={{ marginTop: 24 }}>
+          Các phiếu chi đã có
+        </Typography.Title>
+        <Table
+          rowKey="so_ct"
+          columns={paymentColumns}
+          dataSource={detailData?.payments || []}
           pagination={false}
           size="small"
         />

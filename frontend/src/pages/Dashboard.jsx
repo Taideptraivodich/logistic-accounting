@@ -88,13 +88,31 @@ export default function Dashboard() {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={8} lg={8}>
+      </Row>
+
+      <div style={{ marginTop: 24, marginBottom: 12, fontWeight: 600, fontSize: 16 }}>
+        Tồn quỹ theo sổ quỹ
+      </div>
+      <Row gutter={[16, 16]}>
+        {(data.quy || []).map((q) => (
+          <Col xs={24} sm={12} md={8} lg={6} key={q.id}>
+            <Card>
+              <Statistic
+                title={q.name}
+                value={formatMoney(q.ton_cuoi)}
+                prefix={<WalletOutlined />}
+                valueStyle={{ color: q.ton_cuoi >= 0 ? '#1677ff' : '#e03131' }}
+              />
+            </Card>
+          </Col>
+        ))}
+        <Col xs={24} sm={12} md={8} lg={6}>
           <Card>
             <Statistic
-              title="Tồn quỹ hiện tại"
+              title="Tổng tồn quỹ"
               value={formatMoney(data.ton_quy)}
               prefix={<WalletOutlined />}
-              valueStyle={{ color: '#1677ff' }}
+              valueStyle={{ color: '#1677ff', fontWeight: 700 }}
             />
           </Card>
         </Col>

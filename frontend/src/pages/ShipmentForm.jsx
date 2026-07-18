@@ -276,7 +276,13 @@ export default function ShipmentForm() {
         <div style={{ background: '#fff', padding: 24, borderRadius: 8, marginBottom: 16 }}>
           <Title level={5}>Thông tin chung</Title>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0 16px' }}>
-            <Form.Item label="Ngày chứng từ" name="ngay_ct">
+            <Form.Item
+              label="Ngày chứng từ"
+              name="ngay_ct"
+              initialValue={dayjs()}
+              rules={[{ required: true, message: 'Vui lòng chọn ngày chứng từ' }]}
+              tooltip="Ngày này dùng để gom lô hàng vào đúng tháng phát sinh ở báo cáo công nợ / doanh thu — bắt buộc nhập."
+            >
               <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
             </Form.Item>
             <Form.Item

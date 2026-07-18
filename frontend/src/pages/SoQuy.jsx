@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Card, Row, Col, Statistic, Drawer, Button } from 'antd';
-import { EyeOutlined, WalletOutlined } from '@ant-design/icons';
+import { Table, Card, Row, Col, Statistic, Drawer, Button, Space } from 'antd';
+import { EyeOutlined, WalletOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { formatMoney, moneyClass } from '../utils/format';
 
@@ -9,6 +10,7 @@ export default function SoQuy() {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
   const [detailRows, setDetailRows] = useState([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
     api.get('/reports/so-quy').then((res) => setRows(res.data)).finally(() => setLoading(false));
@@ -104,6 +106,15 @@ export default function SoQuy() {
         width={800}
         open={!!detail}
         onClose={() => setDetail(null)}
+        extra={
+          <Button
+            size="small"
+            icon={<UnorderedListOutlined />}
+            onClick={() => navigate(`/vouchers?payment_method_id=${detail?.id}`)}
+          >
+            Quản lý phiếu thu / chi
+          </Button>
+        }
       >
         <Table
           rowKey="id"

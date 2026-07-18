@@ -1,15 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Tabs, Table, Button, Modal, Form, Input, InputNumber, Space, Popconfirm, message } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
 function GenericCatalog({ endpoint, title, extraFields }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form] = Form.useForm();
+
+  const filteredRows = useMemo(() => {
+    if (!q.trim()) return rows;
+    const like = q.trim().toLowerCase();
+    return rows.filter((r) => (r.name || '').toLowerCase().includes(like));
+  }, [rows, q]);
 
   const load = () => {
     setLoading(true);
@@ -81,10 +88,20 @@ function GenericCatalog({ endpoint, title, extraFields }) {
 
   return (
     <div>
-      <Button type="primary" icon={<PlusOutlined />} onClick={openNew} style={{ marginBottom: 12 }}>
-        Thêm {title.toLowerCase()}
-      </Button>
-      <Table rowKey="id" columns={columns} dataSource={rows} loading={loading} pagination={{ pageSize: 15 }} size="small" />
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openNew}>
+          Thêm {title.toLowerCase()}
+        </Button>
+        <Input
+          placeholder={`Tìm ${title.toLowerCase()}...`}
+          allowClear
+          style={{ width: 260 }}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          prefix={<SearchOutlined />}
+        />
+      </Space>
+      <Table rowKey="id" columns={columns} dataSource={filteredRows} loading={loading} pagination={{ pageSize: 15 }} size="small" />
 
       <Modal
         title={editing ? `Sửa ${title.toLowerCase()}` : `Thêm ${title.toLowerCase()}`}
