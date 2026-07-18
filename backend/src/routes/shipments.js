@@ -72,10 +72,43 @@ function regenerateAutoVouchers(shipmentId, { soToKhai, customerId, customerName
   }
 }
 
+// "Debit Note" / Customer Charges: copy 1 LẦN DUY NHẤT từ Cost (shipment_charges) sang
+// shipment_customer_charges — dùng lúc tạo lô hàng mới, hoặc "lazy copy" lần đầu GET tab Customer
+// Charges của 1 lô hàng cũ (tạo trước khi có tính năng này, đã có Cost nhưng chưa có dòng nào ở
+// đây). Hàm này chỉ INSERT, không bao giờ tự gọi lại nếu bảng đã có dữ liệu (xem nơi gọi).
+function copyChargesToCustomerCharges(shipmentId, charges) {
+  if (!charges || charges.length === 0) return;
+  const insert = db.prepare(
+    `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, ghi_chu)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  );
+  charges.forEach((c, idx) => {
+    insert.run(shipmentId, idx + 1, c.id || null, c.loai_phi || '(chưa đặt tên)', null, 1, c.so_tien || 0, null, null);
+  });
+}
+
+function withCustomerChargeTotals(rows) {
+  const lines = rows.map((r) => {
+    const thanh_tien = (r.don_gia || 0) * (r.so_luong || 0);
+    const vat_amount = r.vat_percent != null ? (thanh_tien * r.vat_percent) / 100 : 0;
+    return { ...r, thanh_tien, vat_amount, tong_cong: thanh_tien + vat_amount };
+  });
+  const tong = lines.reduce(
+    (acc, l) => ({
+      subtotal: acc.subtotal + l.thanh_tien,
+      vat: acc.vat + l.vat_amount,
+      grand_total: acc.grand_total + l.tong_cong,
+    }),
+    { subtotal: 0, vat: 0, grand_total: 0 }
+  );
+  return { lines, ...tong };
+}
+
 function getShipmentFull(id) {
   const shipment = db
     .prepare(
-      `SELECT s.*, c.name as customer_name, pm.name as cuoc_payment_method_name
+      `SELECT s.*, c.name as customer_name, c.address as customer_address, c.tax_code as customer_tax_code,
+        c.contact_name as customer_contact_name, pm.name as cuoc_payment_method_name
        FROM shipments s
        LEFT JOIN customers c ON c.id = s.customer_id
        LEFT JOIN payment_methods pm ON pm.id = s.cuoc_payment_method_id
@@ -165,7 +198,7 @@ router.get('/:id', (req, res) => {
 router.post('/', (req, res) => {
   const {
     ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai,
-    so_container, so_luong_cont, cuoc_dv, ghi_chu, status,
+    so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po,
     cuoc_payment_method_id, cuoc_thu_ngay, charges = [],
   } = req.body;
 
@@ -180,13 +213,13 @@ router.post('/', (req, res) => {
     const info = db
       .prepare(
         `INSERT INTO shipments
-         (ma_lo, ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai, so_container, so_luong_cont, cuoc_dv, ghi_chu, status, cuoc_payment_method_id, cuoc_thu_ngay)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+         (ma_lo, ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai, so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po, cuoc_payment_method_id, cuoc_thu_ngay)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         ma_lo, ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null,
         ngay_to_khai || null, so_container || null, so_luong_cont || null,
-        cuoc_dv || 0, ghi_chu || null, status || 'hoan_thanh',
+        cuoc_dv || 0, ghi_chu || null, status || 'hoan_thanh', po || null,
         cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0
       );
     const shipmentId = info.lastInsertRowid;
@@ -195,13 +228,20 @@ router.post('/', (req, res) => {
       `INSERT INTO shipment_charges (shipment_id, ngay_ct, loai_phi, supplier_id, payment_method_id, so_tien, da_thanh_toan, la_chi_ho, ghi_chu)
        VALUES (?,?,?,?,?,?,?,?,?)`
     );
+    const insertedCharges = [];
     for (const c of charges) {
-      insCharge.run(
+      const chargeInfo = insCharge.run(
         shipmentId, c.ngay_ct || ngayCtHieuLuc, c.loai_phi || null,
         c.supplier_id || null, c.payment_method_id || null,
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );
+      insertedCharges.push({ id: chargeInfo.lastInsertRowid, loai_phi: c.loai_phi, so_tien: c.so_tien || 0 });
     }
+
+    // "Debit Note" (Customer Charges): lô hàng MỚI tạo -> tự copy 1 LẦN từ Cost vừa lưu ở trên
+    // sang shipment_customer_charges (xem ghi chú ở schema.sql). Sau lần copy này, 2 bên độc lập
+    // hoàn toàn — sửa Cost về sau (route PUT bên dưới) KHÔNG đụng tới bảng này nữa.
+    copyChargesToCustomerCharges(shipmentId, insertedCharges);
 
     // v2: tick "Đã thu cước ngay" / "Đã thanh toán?" giờ tự sinh luôn phiếu thu/chi thật
     // (xem regenerateAutoVouchers ở trên) — không còn chỉ là cờ đánh dấu như đợt trước.
@@ -223,7 +263,7 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const {
     ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai,
-    so_container, so_luong_cont, cuoc_dv, ghi_chu, status,
+    so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po,
     cuoc_payment_method_id, cuoc_thu_ngay, charges = [],
   } = req.body;
 
@@ -232,14 +272,16 @@ router.put('/:id', (req, res) => {
   const trx = db.transaction(() => {
     db.prepare(
       `UPDATE shipments SET ngay_ct=?, customer_id=?, invoice=?, so_to_khai=?, ngay_to_khai=?,
-       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, cuoc_payment_method_id=?, cuoc_thu_ngay=?, updated_at=datetime('now')
+       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, po=?, cuoc_payment_method_id=?, cuoc_thu_ngay=?, updated_at=datetime('now')
        WHERE id=?`
     ).run(
       ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null, ngay_to_khai || null,
       so_container || null, so_luong_cont || null, cuoc_dv || 0, ghi_chu || null,
-      status || 'hoan_thanh', cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0, req.params.id
+      status || 'hoan_thanh', po || null, cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0, req.params.id
     );
 
+    // KHÔNG đụng tới shipment_customer_charges ở đây — theo đúng nguyên tắc "copy 1 lần lúc tạo,
+    // sau đó độc lập hoàn toàn". Sửa Cost khi Sửa lô hàng KHÔNG đồng bộ lại Customer Charges.
     db.prepare(`DELETE FROM shipment_charges WHERE shipment_id = ?`).run(req.params.id);
     const insCharge = db.prepare(
       `INSERT INTO shipment_charges (shipment_id, ngay_ct, loai_phi, supplier_id, payment_method_id, so_tien, da_thanh_toan, la_chi_ho, ghi_chu)
@@ -264,6 +306,54 @@ router.put('/:id', (req, res) => {
   });
   trx();
   res.json(getShipmentFull(req.params.id));
+});
+
+// ================= TAB "DEBIT NOTE" / CUSTOMER CHARGES =================
+// GET: trả về danh sách dòng thu khách của lô hàng. Nếu lô hàng chưa có dòng nào (ví dụ lô hàng
+// tạo trước khi có tính năng này) mà đã có Cost -> tự copy 1 lần (lazy copy) rồi trả về, đúng
+// nghiệp vụ "khi mở tab Debit Note lần đầu, hệ thống sẽ copy toàn bộ dòng từ tab Chi phí sang".
+router.get('/:id/customer-charges', (req, res) => {
+  const shipmentId = req.params.id;
+  let rows = db
+    .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
+    .all(shipmentId);
+  if (rows.length === 0) {
+    const charges = db.prepare(`SELECT * FROM shipment_charges WHERE shipment_id = ? ORDER BY id`).all(shipmentId);
+    if (charges.length > 0) {
+      copyChargesToCustomerCharges(shipmentId, charges);
+      rows = db
+        .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
+        .all(shipmentId);
+    }
+  }
+  res.json(withCustomerChargeTotals(rows));
+});
+
+// PUT: lưu lại toàn bộ dòng Customer Charges đã sửa (thêm/sửa/xoá dòng tự do) — xoá hết rồi tạo
+// lại theo đúng thứ tự gửi lên, cùng cách làm với shipment_charges. ĐỘC LẬP hoàn toàn với Cost —
+// route này không đọc/ghi gì vào shipment_charges.
+router.put('/:id/customer-charges', (req, res) => {
+  const { lines = [] } = req.body;
+  const shipmentId = req.params.id;
+  const trx = db.transaction(() => {
+    db.prepare(`DELETE FROM shipment_customer_charges WHERE shipment_id = ?`).run(shipmentId);
+    const insert = db.prepare(
+      `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, ghi_chu)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    );
+    lines.forEach((l, idx) => {
+      insert.run(
+        shipmentId, idx + 1, l.source_charge_id || null, l.mo_ta || '', l.don_vi_tinh || null,
+        l.so_luong ?? 1, l.don_gia ?? 0, l.vat_percent === '' || l.vat_percent === undefined ? null : l.vat_percent,
+        l.ghi_chu || null
+      );
+    });
+  });
+  trx();
+  const rows = db
+    .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
+    .all(shipmentId);
+  res.json(withCustomerChargeTotals(rows));
 });
 
 // ---- DELETE ----

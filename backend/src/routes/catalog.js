@@ -41,7 +41,7 @@ function makeCrud(table, extraCols = []) {
   };
 }
 
-const customerCrud = makeCrud('customers', ['default_cuoc_dv', 'note']);
+const customerCrud = makeCrud('customers', ['default_cuoc_dv', 'note', 'address', 'tax_code', 'contact_name']);
 router.get('/customers', customerCrud.list);
 router.post('/customers', customerCrud.create);
 router.put('/customers/:id', customerCrud.update);
@@ -59,11 +59,26 @@ router.post('/fee-types', feeTypeCrud.create);
 router.put('/fee-types/:id', feeTypeCrud.update);
 router.delete('/fee-types/:id', feeTypeCrud.remove);
 
-const pmCrud = makeCrud('payment_methods', ['opening_balance']);
+const pmCrud = makeCrud('payment_methods', [
+  'opening_balance', 'bank_account_name', 'bank_account_number', 'bank_name', 'bank_swift',
+]);
 router.get('/payment-methods', pmCrud.list);
 router.post('/payment-methods', pmCrud.create);
 router.put('/payment-methods/:id', pmCrud.update);
 router.delete('/payment-methods/:id', pmCrud.remove);
+
+// ================= THÔNG TIN CÔNG TY (Header khi in Debit Note) =================
+// Bảng 1 dòng cố định (id=1) — không dùng makeCrud (không có "name" là khoá danh mục kiểu list).
+router.get('/company-settings', (req, res) => {
+  res.json(db.prepare(`SELECT * FROM company_settings WHERE id = 1`).get());
+});
+router.put('/company-settings', (req, res) => {
+  const { name, address, tax_code, phone, email } = req.body;
+  db.prepare(
+    `UPDATE company_settings SET name=?, address=?, tax_code=?, phone=?, email=? WHERE id=1`
+  ).run(name || null, address || null, tax_code || null, phone || null, email || null);
+  res.json(db.prepare(`SELECT * FROM company_settings WHERE id = 1`).get());
+});
 
 // ================= DANH MỤC THU/CHI KHÁC =================
 // Dùng cho phiếu thu/chi không gắn khách hàng / NCC cụ thể (chi in hồ sơ, mua văn phòng phẩm...).

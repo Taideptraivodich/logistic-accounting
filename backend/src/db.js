@@ -68,6 +68,20 @@ ensureColumn('supplier_payments', 'auto_generated', 'auto_generated INTEGER DEFA
 // tự thêm loại phí này vào danh mục nếu Senior chưa có, để chọn nhanh khi nhập lô hàng.
 db.exec(`INSERT OR IGNORE INTO fee_types (name) VALUES ('Phí ra vào cổng')`);
 
+// Đợt "Debit Note": Debit Note bắt buộc phải có Địa chỉ + Mã số thuế khách hàng (theo mẫu),
+// nhưng customers trước giờ chỉ có name/default_cuoc_dv/note — bổ sung thêm, không đụng cột cũ.
+ensureColumn('customers', 'address', 'address TEXT');
+ensureColumn('customers', 'tax_code', 'tax_code TEXT');
+ensureColumn('customers', 'contact_name', 'contact_name TEXT');
+// PO thuộc về lô hàng (dùng chung cho mọi Debit Note tạo từ lô hàng đó), tương tự so_to_khai.
+ensureColumn('shipments', 'po', 'po TEXT');
+// Tận dụng lại "Quỹ" (payment_methods) làm nguồn gợi ý tài khoản ngân hàng cho Debit Note, thay
+// vì tạo thêm 1 bảng tài khoản ngân hàng riêng — đỡ trùng lặp dữ liệu.
+ensureColumn('payment_methods', 'bank_account_name', 'bank_account_name TEXT');
+ensureColumn('payment_methods', 'bank_account_number', 'bank_account_number TEXT');
+ensureColumn('payment_methods', 'bank_name', 'bank_name TEXT');
+ensureColumn('payment_methods', 'bank_swift', 'bank_swift TEXT');
+
 // Danh mục thu/chi khác mặc định (chi in hồ sơ, mua văn phòng phẩm...) — tự thêm cho DB đã có
 // sẵn của Senior mỗi lần server khởi động, không cần chạy lại seed.js thủ công.
 const defaultVoucherCatsChi = [

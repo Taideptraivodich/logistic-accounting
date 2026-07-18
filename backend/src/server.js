@@ -8,6 +8,7 @@ const catalogRoutes = require('./routes/catalog');
 const shipmentRoutes = require('./routes/shipments');
 const voucherRoutes = require('./routes/vouchers');
 const reportRoutes = require('./routes/reports');
+const debitNoteRoutes = require('./routes/debit-notes');
 
 const app = express();
 app.use(cors());
@@ -17,6 +18,7 @@ app.use('/api', catalogRoutes);
 app.use('/api/shipments', shipmentRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/debit-notes', debitNoteRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

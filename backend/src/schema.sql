@@ -62,6 +62,29 @@ CREATE TABLE IF NOT EXISTS shipment_charges (
   ghi_chu TEXT
 );
 
+-- ================= CUSTOMER CHARGES / "DEBIT NOTE" TAB (khoản sẽ thu khách) =================
+-- Đại diện cho toàn bộ khoản SẼ THU KHÁCH của 1 lô hàng — KHÁC với shipment_charges (chi phí
+-- THỰC TẾ trả nhà cung cấp). Giá thu khách không nhất thiết bằng chi phí thực tế (ví dụ chi phí
+-- nhà xe 10.000 nhưng thu khách 20.000), và có thể có khoản thu trước chưa phát sinh chi phí thật
+-- (ví dụ "Dự phòng kiểm hóa"). Quan hệ Cost -> Customer Charges là MỘT CHIỀU và CHỈ COPY 1 LẦN:
+-- lúc tạo lô hàng mới (hoặc lần đầu mở tab, với lô hàng cũ tạo trước khi có tính năng này) —
+-- sau đó 2 bên hoàn toàn độc lập, sửa Cost về sau KHÔNG đồng bộ lại Customer Charges.
+-- source_charge_id chỉ để truy vết dòng này copy từ charge nào lúc khởi tạo, không phải khoá
+-- đồng bộ. Thiết kế phẳng, độc lập theo shipment_id (không qua bảng "debit_notes" header) để sau
+-- này có thể sinh PDF Debit Note / Invoice / Customer Receivable từ đây mà không cần đổi DB.
+CREATE TABLE IF NOT EXISTS shipment_customer_charges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+  stt INTEGER NOT NULL DEFAULT 1,
+  source_charge_id INTEGER,           -- shipment_charges.id gốc lúc copy lần đầu, chỉ để tham khảo
+  mo_ta TEXT NOT NULL,                -- Description
+  don_vi_tinh TEXT,                   -- Unit
+  so_luong REAL NOT NULL DEFAULT 1,   -- Qty
+  don_gia REAL NOT NULL DEFAULT 0,    -- Unit Price — độc lập hoàn toàn với shipment_charges.so_tien
+  vat_percent REAL,                   -- NULL = chưa xác định thuế suất; 0/8/10 = % VAT
+  ghi_chu TEXT                        -- Remark
+);
+
 -- ================= DANH MỤC THU/CHI KHÁC (không gắn khách hàng / NCC) =================
 -- Dùng cho các khoản thu/chi không thuộc về 1 khách hàng hay 1 NCC cụ thể,
 -- ví dụ: chi in hồ sơ, chi mua văn phòng phẩm, chi tiếp khách, thu khác...
@@ -121,4 +144,87 @@ CREATE TABLE IF NOT EXISTS cong_no_notes (
   ghi_chu TEXT,
   la_no_xau INTEGER DEFAULT 0,
   UNIQUE(doi_tuong_type, doi_tuong_id, month_key)
+);
+
+-- ================= THÔNG TIN CÔNG TY (dùng làm phần "Header" khi in Debit Note) =================
+-- Bảng 1 dòng duy nhất (id cố định = 1), sửa tại Danh mục > Công ty. Được snapshot vào từng
+-- Debit Note lúc tạo (giống snapshot khách hàng/lô hàng) để nếu sau này đổi thông tin công ty,
+-- các Debit Note cũ đã phát hành không bị thay đổi theo.
+CREATE TABLE IF NOT EXISTS company_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  name TEXT,
+  address TEXT,
+  tax_code TEXT,
+  phone TEXT,
+  email TEXT
+);
+INSERT OR IGNORE INTO company_settings (id, name) VALUES (1, NULL);
+
+-- ================= DEBIT NOTE (chứng từ xác nhận công nợ gửi khách — KHÔNG phải hoá đơn VAT) =================
+-- 1 Shipment có thể có NHIỀU Debit Note (ví dụ: 1 bản "Phí dịch vụ", 1 bản "Phí chi hộ" — xem
+-- 2 mẫu PDF gốc, mỗi loại thu về 1 tài khoản ngân hàng khác nhau). Toàn bộ thông tin khách hàng/
+-- lô hàng/công ty/ngân hàng được SNAPSHOT (copy) vào chính bảng này tại thời điểm tạo — sau đó
+-- KHÔNG bao giờ đọc lại từ customers/shipments/company_settings để hiển thị hay tính tiền, đúng
+-- Business Rule 2/3 (Debit Note giữ nguyên dữ liệu dù Shipment/Customer đổi sau này).
+-- status: 'draft' (Senior còn sửa tự do) -> 'confirmed' (khoá sửa/xoá, chỉ còn xem + in).
+CREATE TABLE IF NOT EXISTS debit_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  so_dn TEXT NOT NULL UNIQUE,                 -- số Debit Note tự sinh, vd DN000001
+  loai TEXT NOT NULL DEFAULT 'dich_vu' CHECK(loai IN ('dich_vu','chi_ho')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','confirmed')),
+  ngay_ct TEXT,
+  shipment_id INTEGER REFERENCES shipments(id) ON DELETE SET NULL, -- để lọc/tra cứu, KHÔNG dùng để hiển thị dữ liệu
+
+  -- Snapshot công ty phát hành (Header)
+  company_name TEXT,
+  company_address TEXT,
+  company_tax_code TEXT,
+  company_phone TEXT,
+  company_email TEXT,
+
+  -- Snapshot khách hàng (Customer Information)
+  customer_id INTEGER REFERENCES customers(id),
+  customer_name TEXT,
+  customer_address TEXT,
+  customer_tax_code TEXT,
+  customer_contact_name TEXT,
+
+  -- Snapshot lô hàng (Shipment Information)
+  ma_lo TEXT,
+  invoice TEXT,
+  so_to_khai TEXT,
+  ngay_to_khai TEXT,
+  so_container TEXT,
+  po TEXT,
+
+  -- Bank Information (tự do, không ràng buộc khoá ngoại — mỗi Debit Note có thể thu về 1 TK khác nhau)
+  bank_account_name TEXT,
+  bank_account_number TEXT,
+  bank_name TEXT,
+  bank_swift TEXT,
+
+  -- Signature
+  nguoi_ky TEXT,
+  chuc_danh_nguoi_ky TEXT,
+
+  ghi_chu TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Charge Details của Debit Note. Giá bán (don_gia) HOÀN TOÀN độc lập với shipment_charges.so_tien
+-- (Business Rule: giá thu khách không nhất thiết bằng chi phí thực tế) — source_charge_id chỉ để
+-- truy vết dòng này được tạo gợi ý từ charge nào, KHÔNG có ràng buộc/đồng bộ ngược lại.
+CREATE TABLE IF NOT EXISTS debit_note_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  debit_note_id INTEGER NOT NULL REFERENCES debit_notes(id) ON DELETE CASCADE,
+  stt INTEGER NOT NULL DEFAULT 1,
+  source_charge_id INTEGER,           -- shipment_charges.id gốc (nếu có) — chỉ để tham khảo/truy vết
+  mo_ta TEXT NOT NULL,                -- Description
+  don_vi_tinh TEXT,                   -- Unit (Tờ khai, Cont 40H, Bộ...)
+  so_luong REAL NOT NULL DEFAULT 1,   -- Qty
+  don_gia REAL NOT NULL DEFAULT 0,    -- Unit Price (Senior tự nhập/sửa, không lấy từ Cost)
+  vat_percent REAL,                   -- NULL = "No VAT" (ngoài phạm vi thuế); 0/8/10 = % chịu thuế
+  so_hoa_don TEXT,                    -- Số hoá đơn (NCC xuất, cho dòng "chi hộ")
+  ghi_chu TEXT                        -- Remark
 );

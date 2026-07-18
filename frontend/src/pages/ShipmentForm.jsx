@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Form, Input, InputNumber, Select, DatePicker, Checkbox, Button,
-  Table, Space, message, Typography, AutoComplete, Popconfirm,
+  Table, Space, message, Typography, AutoComplete, Popconfirm, Tabs,
 } from 'antd';
 import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -21,6 +21,176 @@ const moneyProps = {
   formatter: (val) => (val === undefined || val === null ? '' : `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')),
   parser: (val) => (val ? val.replace(/,/g, '') : ''),
 };
+
+// ================= TAB "DEBIT NOTE" (Customer Charges) =================
+// Khoản SẼ THU KHÁCH của lô hàng — độc lập hoàn toàn với Cost sau lần copy đầu tiên (xem ghi chú
+// ở schema.sql / routes/shipments.js). Chỉ hoạt động được sau khi lô hàng đã Lưu (có shipmentId
+// thật), vì lần copy đầu tiên diễn ra ở backend lúc tạo lô hàng / lần đầu GET tab này.
+const VAT_OPTIONS = [
+  { value: null, label: 'No VAT' },
+  { value: 0, label: '0%' },
+  { value: 8, label: '8%' },
+  { value: 10, label: '10%' },
+];
+
+function CustomerChargesTab({ shipmentId }) {
+  const [lines, setLines] = useState([]);
+  const [totals, setTotals] = useState({ subtotal: 0, vat: 0, grand_total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api
+      .get(`/shipments/${shipmentId}/customer-charges`)
+      .then(({ data }) => {
+        setLines(
+          data.lines.map((l) => ({
+            key: l.id ?? nextTempId(),
+            mo_ta: l.mo_ta,
+            don_vi_tinh: l.don_vi_tinh,
+            so_luong: l.so_luong,
+            don_gia: l.don_gia,
+            vat_percent: l.vat_percent,
+            ghi_chu: l.ghi_chu,
+            source_charge_id: l.source_charge_id,
+          }))
+        );
+        setTotals({ subtotal: data.subtotal, vat: data.vat, grand_total: data.grand_total });
+        setDirty(false);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [shipmentId]);
+
+  const updateLine = (key, field, value) => {
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, [field]: value } : l)));
+    setDirty(true);
+  };
+  const addLine = () => {
+    setLines((prev) => [...prev, { key: nextTempId(), mo_ta: '', don_vi_tinh: '', so_luong: 1, don_gia: 0, vat_percent: null, ghi_chu: '' }]);
+    setDirty(true);
+  };
+  const removeLine = (key) => {
+    setLines((prev) => prev.filter((l) => l.key !== key));
+    setDirty(true);
+  };
+
+  const localTotals = useMemo(() => {
+    return lines.reduce(
+      (acc, l) => {
+        const thanhTien = (l.don_gia || 0) * (l.so_luong || 0);
+        const vatAmount = l.vat_percent != null ? (thanhTien * l.vat_percent) / 100 : 0;
+        return { subtotal: acc.subtotal + thanhTien, vat: acc.vat + vatAmount, grand_total: acc.grand_total + thanhTien + vatAmount };
+      },
+      { subtotal: 0, vat: 0, grand_total: 0 }
+    );
+  }, [lines]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/shipments/${shipmentId}/customer-charges`, {
+        lines: lines.map((l) => ({
+          mo_ta: l.mo_ta,
+          don_vi_tinh: l.don_vi_tinh,
+          so_luong: l.so_luong,
+          don_gia: l.don_gia,
+          vat_percent: l.vat_percent,
+          ghi_chu: l.ghi_chu,
+          source_charge_id: l.source_charge_id,
+        })),
+      });
+      message.success('Đã lưu Debit Note');
+      load();
+    } catch (e) {
+      message.error(e?.response?.data?.error || 'Không lưu được Debit Note');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const columns = [
+    {
+      title: 'Description',
+      dataIndex: 'mo_ta',
+      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'mo_ta', e.target.value)} placeholder="Mô tả" />,
+    },
+    {
+      title: 'Unit',
+      dataIndex: 'don_vi_tinh',
+      width: 110,
+      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'don_vi_tinh', e.target.value)} />,
+    },
+    {
+      title: 'Qty',
+      dataIndex: 'so_luong',
+      width: 80,
+      render: (v, r) => <InputNumber style={{ width: '100%' }} value={v} min={0} onChange={(val) => updateLine(r.key, 'so_luong', val)} />,
+    },
+    {
+      title: 'Unit Price',
+      dataIndex: 'don_gia',
+      width: 140,
+      render: (v, r) => (
+        <InputNumber
+          style={{ width: '100%' }}
+          value={v}
+          min={0}
+          formatter={(val) => `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+          parser={(val) => val.replace(/,/g, '')}
+          onChange={(val) => updateLine(r.key, 'don_gia', val)}
+        />
+      ),
+    },
+    {
+      title: 'VAT',
+      dataIndex: 'vat_percent',
+      width: 100,
+      render: (v, r) => (
+        <Select style={{ width: '100%' }} value={v} options={VAT_OPTIONS} onChange={(val) => updateLine(r.key, 'vat_percent', val)} />
+      ),
+    },
+    {
+      title: 'Remark',
+      dataIndex: 'ghi_chu',
+      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'ghi_chu', e.target.value)} placeholder="Ghi chú" />,
+    },
+    {
+      title: '',
+      width: 50,
+      render: (_, r) => (
+        <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeLine(r.key)} />
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+        Đây là khoản SẼ THU KHÁCH — độc lập hoàn toàn với Cost bên tab "Chi phí" (giá bán không
+        nhất thiết bằng chi phí thực tế). Lần đầu mở tab này, dữ liệu được copy từ Cost sang; sau
+        đó sửa ở đây không ảnh hưởng Cost, và ngược lại.
+      </Typography.Text>
+      <Table rowKey="key" dataSource={lines} columns={columns} loading={loading} pagination={false} size="small" />
+      <Button icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={addLine}>
+        Thêm dòng
+      </Button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 32, marginTop: 16, flexWrap: 'wrap' }}>
+        <span>Subtotal: <b>{formatMoney(localTotals.subtotal)}</b></span>
+        <span>VAT: <b>{formatMoney(localTotals.vat)}</b></span>
+        <span>Grand Total: <b>{formatMoney(localTotals.grand_total)}</b></span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave} disabled={!dirty}>
+          Lưu Debit Note
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function ShipmentForm() {
   const { id } = useParams();
@@ -74,6 +244,7 @@ export default function ShipmentForm() {
           customer_id: data.customer_id,
           invoice: data.invoice,
           so_to_khai: data.so_to_khai,
+          po: data.po,
           ngay_to_khai: data.ngay_to_khai ? dayjs(data.ngay_to_khai) : null,
           so_container: data.so_container,
           so_luong_cont: data.so_luong_cont,
@@ -386,6 +557,9 @@ export default function ShipmentForm() {
             <Form.Item label="Số tờ khai" name="so_to_khai">
               <Input />
             </Form.Item>
+            <Form.Item label="PO" name="po" tooltip="Dùng để hiển thị trên Debit Note (nếu có)">
+              <Input />
+            </Form.Item>
             <Form.Item label="Ngày tờ khai" name="ngay_to_khai">
               <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
             </Form.Item>
@@ -425,24 +599,43 @@ export default function ShipmentForm() {
         </div>
 
         <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
-          <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
-            <Title level={5} style={{ margin: 0 }}>
-              Chi phí phát sinh (phải trả nhà cung cấp)
-            </Title>
-            <Button icon={<PlusOutlined />} onClick={addCharge}>
-              Thêm dòng chi phí
-            </Button>
-          </Space>
+          <Tabs
+            items={[
+              {
+                key: 'cost',
+                label: 'Chi phí (phải trả nhà cung cấp)',
+                children: (
+                  <>
+                    <Space style={{ width: '100%', justifyContent: 'flex-end', marginBottom: 12 }}>
+                      <Button icon={<PlusOutlined />} onClick={addCharge}>
+                        Thêm dòng chi phí
+                      </Button>
+                    </Space>
 
-          <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
+                    <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
 
-          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-            Lưu ý: Lưu lô hàng sẽ tự tạo (hoặc cập nhật lại) phiếu thu/phiếu chi thật cho những
-            khoản đã tick "Đã thu?" (cước) / "Đã thanh toán?" (từng dòng chi phí) — nội dung tự
-            sinh theo mẫu "TK {'{'}số tờ khai{'}'} - Thu cước/Chi {'{...}'} - {'{'}mã lô{'}'}". Bỏ tick rồi Lưu sẽ tự
-            xoá phiếu tương ứng. Vẫn có thể tạo phiếu tay khác (không gắn theo cơ chế này) ở menu
-            "Phiếu thu / chi" hoặc "Công nợ KH/NCC".
-          </Typography.Text>
+                    <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      Lưu ý: Lưu lô hàng sẽ tự tạo (hoặc cập nhật lại) phiếu thu/phiếu chi thật cho những
+                      khoản đã tick "Đã thu?" (cước) / "Đã thanh toán?" (từng dòng chi phí) — nội dung tự
+                      sinh theo mẫu "TK {'{'}số tờ khai{'}'} - Thu cước/Chi {'{...}'} - {'{'}mã lô{'}'}". Bỏ tick rồi Lưu sẽ tự
+                      xoá phiếu tương ứng. Vẫn có thể tạo phiếu tay khác (không gắn theo cơ chế này) ở menu
+                      "Phiếu thu / chi" hoặc "Công nợ KH/NCC".
+                    </Typography.Text>
+                  </>
+                ),
+              },
+              {
+                key: 'debit-note',
+                label: 'Debit Note (thu khách)',
+                disabled: !isEdit,
+                children: isEdit ? (
+                  <CustomerChargesTab shipmentId={id} />
+                ) : (
+                  <Typography.Text type="secondary">Lưu lô hàng trước để dùng tab này.</Typography.Text>
+                ),
+              },
+            ]}
+          />
 
           {isEdit && (
             <div style={{ marginTop: 24 }}>
