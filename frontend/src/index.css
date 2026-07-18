@@ -1,0 +1,13 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f5f6f8;
+}
+.money {
+  font-variant-numeric: tabular-nums;
+}
+.money-pos { color: #2f9e44; }
+.money-neg { color: #e03131; }
