@@ -58,6 +58,12 @@ ensureColumn('shipment_charges', 'la_chi_ho', 'la_chi_ho INTEGER DEFAULT 0');
 ensureColumn('customer_receipts', 'category_id', 'category_id INTEGER REFERENCES voucher_categories(id)');
 ensureColumn('supplier_payments', 'category_id', 'category_id INTEGER REFERENCES voucher_categories(id)');
 
+// Đợt "tự sinh phiếu thu/chi từ Lô hàng (v2)": đánh dấu phiếu nào do hệ thống tự tạo
+// (khi tick "Đã thu"/"Đã thanh toán" ở màn Lô hàng) để có thể xoá/tạo lại đúng các phiếu đó
+// mỗi khi lô hàng được lưu, mà không đụng tới phiếu Senior tự tạo tay ở màn Phiếu thu/chi.
+ensureColumn('customer_receipts', 'auto_generated', 'auto_generated INTEGER DEFAULT 0');
+ensureColumn('supplier_payments', 'auto_generated', 'auto_generated INTEGER DEFAULT 0');
+
 // Chi hộ đôi khi có cả phí nhà xe / phí ra vào cổng (không chỉ thuế, phí HQ, phí CO) —
 // tự thêm loại phí này vào danh mục nếu Senior chưa có, để chọn nhanh khi nhập lô hàng.
 db.exec(`INSERT OR IGNORE INTO fee_types (name) VALUES ('Phí ra vào cổng')`);

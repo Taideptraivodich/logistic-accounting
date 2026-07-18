@@ -14,6 +14,54 @@ function nextCode(prefix, table, col) {
   return prefix + String(n).padStart(6, '0');
 }
 
+// ================= TỰ SINH PHIẾU THU/CHI TỪ LÔ HÀNG (v2 — theo yêu cầu Senior) =================
+// Đảo ngược quyết định đợt trước (khi đó chủ động BỎ auto-gen để tránh lệch số khi sửa lô hàng).
+// Lần này Senior yêu cầu lại rõ ràng: tick "Đã thu" (cước) / "Đã thanh toán" (từng dòng chi phí)
+// thì tự tạo luôn phiếu thu/chi thật, nội dung theo đúng quy cách Senior đưa ra. Để tránh lệch số
+// khi Senior sửa lô hàng nhiều lần, cách làm là: mỗi lần lưu lô hàng, XOÁ HẾT các phiếu tự sinh
+// (auto_generated=1) đang gắn với lô này rồi TẠO LẠI từ đầu theo dữ liệu mới nhất — chỉ áp dụng
+// cho phiếu có auto_generated=1, không đụng tới phiếu Senior tự tạo tay ở màn Phiếu thu/chi (dù
+// phiếu tay đó có gắn "Lô hàng liên kết" trùng lô này).
+// LƯU Ý CHO PHIÊN SAU: nếu Senior tự sửa tay 1 phiếu tự sinh (vd đổi quỹ) rồi sau đó sửa lại lô
+// hàng, phiếu tự sinh đó sẽ bị xoá/tạo lại và MẤT chỉnh sửa tay đó — đây là đánh đổi đã biết,
+// chưa xử lý (có thể cần bàn thêm với Senior nếu phát sinh khó chịu trong thực tế).
+
+function buildAutoContentThu({ soToKhai, customerName, maLo }) {
+  const tkPart = soToKhai ? `TK ${soToKhai} - ` : '';
+  return `${tkPart}Thu cước ${customerName || ''} - ${maLo}`.replace(/\s+/g, ' ').trim();
+}
+
+function buildAutoContentChi({ soToKhai, loaiPhi, maLo }) {
+  const tkPart = soToKhai ? `TK ${soToKhai} - ` : '';
+  return `${tkPart}Chi ${loaiPhi || 'phí'} - ${maLo}`.replace(/\s+/g, ' ').trim();
+}
+
+// Xoá hết phiếu tự sinh cũ đang gắn với lô hàng này, rồi tạo lại theo dữ liệu mới nhất.
+// Gọi bên trong transaction lưu lô hàng, sau khi đã có shipmentId + charges đã lưu.
+function regenerateAutoVouchers(shipmentId, { soToKhai, customerId, customerName, maLo, ngayCt, cuocDv, cuocPaymentMethodId, cuocThuNgay, charges }) {
+  db.prepare(`DELETE FROM customer_receipts WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
+  db.prepare(`DELETE FROM supplier_payments WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
+
+  if (cuocThuNgay && customerId && (cuocDv || 0) > 0) {
+    const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
+    const ghi_chu = buildAutoContentThu({ soToKhai, customerName, maLo });
+    db.prepare(
+      `INSERT INTO customer_receipts (so_ct, customer_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu, auto_generated)
+       VALUES (?,?,?,?,?,?,?,1)`
+    ).run(so_ct, customerId, shipmentId, ngayCt || null, cuocDv, cuocPaymentMethodId || null, ghi_chu);
+  }
+
+  for (const c of charges) {
+    if (!c.da_thanh_toan || !c.supplier_id || !(c.so_tien > 0)) continue;
+    const so_ct = nextCode('PC', 'supplier_payments', 'so_ct');
+    const ghi_chu = buildAutoContentChi({ soToKhai, loaiPhi: c.loai_phi, maLo });
+    db.prepare(
+      `INSERT INTO supplier_payments (so_ct, supplier_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu, auto_generated)
+       VALUES (?,?,?,?,?,?,?,1)`
+    ).run(so_ct, c.supplier_id, shipmentId, c.ngay_ct || ngayCt || null, c.so_tien, c.payment_method_id || null, ghi_chu);
+  }
+}
+
 function getShipmentFull(id) {
   const shipment = db
     .prepare(
@@ -145,11 +193,14 @@ router.post('/', (req, res) => {
       );
     }
 
-    // GHI CHÚ: từ đợt này KHÔNG còn tự sinh phiếu thu/phiếu chi khi lưu lô hàng nữa —
-    // tránh tình trạng phiếu tự sinh không đồng bộ lại khi sửa lô hàng sau đó (đã ghi trong
-    // AI_HANDOVER trước). "Đã thu cước ngay" / "Đã thanh toán?" giờ chỉ là cờ trạng thái
-    // để Senior theo dõi, còn phiếu thu/chi thật phải tạo tay ở màn "Phiếu thu / chi" (có thể
-    // chọn "Lô hàng liên kết" để gắn về lô này).
+    // v2: tick "Đã thu cước ngay" / "Đã thanh toán?" giờ tự sinh luôn phiếu thu/chi thật
+    // (xem regenerateAutoVouchers ở trên) — không còn chỉ là cờ đánh dấu như đợt trước.
+    const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
+    regenerateAutoVouchers(shipmentId, {
+      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo,
+      ngayCt: ngayCtHieuLuc, cuocDv: cuoc_dv || 0, cuocPaymentMethodId: cuoc_payment_method_id,
+      cuocThuNgay: !!cuoc_thu_ngay, charges,
+    });
 
     return shipmentId;
   });
@@ -163,7 +214,7 @@ router.put('/:id', (req, res) => {
   const {
     ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai,
     so_container, so_luong_cont, cuoc_dv, ghi_chu, status,
-    cuoc_payment_method_id, charges = [],
+    cuoc_payment_method_id, cuoc_thu_ngay, charges = [],
   } = req.body;
 
   const ngayCtHieuLuc = ngay_ct || ngay_to_khai || null;
@@ -171,12 +222,12 @@ router.put('/:id', (req, res) => {
   const trx = db.transaction(() => {
     db.prepare(
       `UPDATE shipments SET ngay_ct=?, customer_id=?, invoice=?, so_to_khai=?, ngay_to_khai=?,
-       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, cuoc_payment_method_id=?, updated_at=datetime('now')
+       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, cuoc_payment_method_id=?, cuoc_thu_ngay=?, updated_at=datetime('now')
        WHERE id=?`
     ).run(
       ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null, ngay_to_khai || null,
       so_container || null, so_luong_cont || null, cuoc_dv || 0, ghi_chu || null,
-      status || 'hoan_thanh', cuoc_payment_method_id || null, req.params.id
+      status || 'hoan_thanh', cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0, req.params.id
     );
 
     db.prepare(`DELETE FROM shipment_charges WHERE shipment_id = ?`).run(req.params.id);
@@ -191,6 +242,15 @@ router.put('/:id', (req, res) => {
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );
     }
+
+    // v2: xoá/tạo lại phiếu tự sinh theo dữ liệu vừa lưu (xem ghi chú ở regenerateAutoVouchers).
+    const ma_lo = db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(req.params.id)?.ma_lo;
+    const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
+    regenerateAutoVouchers(req.params.id, {
+      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo,
+      ngayCt: ngayCtHieuLuc, cuocDv: cuoc_dv || 0, cuocPaymentMethodId: cuoc_payment_method_id,
+      cuocThuNgay: !!cuoc_thu_ngay, charges,
+    });
   });
   trx();
   res.json(getShipmentFull(req.params.id));

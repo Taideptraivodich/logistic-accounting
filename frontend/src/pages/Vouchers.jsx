@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Tabs, Table, Button, Modal, Form, Select, InputNumber, DatePicker,
-  Input, Space, Popconfirm, message, Radio,
+  Input, Space, Popconfirm, message, Radio, Tag,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -86,6 +86,33 @@ function VoucherTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpenNew]);
 
+  // Chọn "Lô hàng liên kết" trong modal -> tự gen Nội dung + Số tiền (tổng), theo quy cách:
+  // Thu: "TK {số tờ khai} - Thu cước {tên khách hàng} - {mã lô}", số tiền = cước DV + chi hộ.
+  // Chi: "TK {số tờ khai} - Chi {các loại phí} - {mã lô}", số tiền = tổng chi phí (đã gồm chi hộ).
+  // Lấy chi tiết đầy đủ (charges) qua GET /shipments/:id thay vì chỉ dùng danh sách rút gọn,
+  // để liệt kê đúng các "loại phí" thật của lô hàng cho phần chi.
+  const onShipmentPick = async (shipmentId) => {
+    if (!shipmentId) return;
+    try {
+      const { data: s } = await api.get(`/shipments/${shipmentId}`);
+      const tkPart = s.so_to_khai ? `TK ${s.so_to_khai} - ` : '';
+      if (isThu) {
+        const soTien = (s.cuoc_dv || 0) + (s.tong_chi_ho || 0);
+        const ghiChu = `${tkPart}Thu cước ${s.customer_name || ''} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
+        setTargetType('owner');
+        form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu, [ownerField]: s.customer_id });
+      } else {
+        const soTien = s.tong_chi_phi || 0;
+        const loaiPhiList = [...new Set((s.charges || []).map((c) => c.loai_phi).filter(Boolean))];
+        const loaiPhiPart = loaiPhiList.length ? loaiPhiList.join(' + ') : 'phí';
+        const ghiChu = `${tkPart}Chi ${loaiPhiPart} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
+        form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu });
+      }
+    } catch {
+      // Không chặn luồng nhập liệu nếu lấy chi tiết lô hàng thất bại — Senior vẫn tự gõ tay được.
+    }
+  };
+
   const openEdit = (r) => {
     setEditing(r);
     setTargetType(r.category_id ? 'category' : 'owner');
@@ -136,12 +163,18 @@ function VoucherTable({
     {
       title: 'Đối tượng',
       width: 190,
-      render: (_, r) =>
-        r.category_id ? (
-          <span style={{ color: '#8c8c8c' }}>{r.category_name} <i>(khác)</i></span>
-        ) : (
-          isThu ? r.customer_name : r.supplier_name
-        ),
+      render: (_, r) => (
+        <span>
+          {r.category_id ? (
+            <span style={{ color: '#8c8c8c' }}>{r.category_name} <i>(khác)</i></span>
+          ) : (
+            isThu ? r.customer_name : r.supplier_name
+          )}
+          {r.auto_generated ? (
+            <Tag color="blue" style={{ marginLeft: 6 }}>Tự động</Tag>
+          ) : null}
+        </span>
+      ),
     },
     { title: 'Mã lô liên kết', dataIndex: 'ma_lo', width: 110, render: (v) => v || <span style={{ color: '#999' }}>—</span> },
     {
@@ -152,7 +185,7 @@ function VoucherTable({
       render: (v) => <span className={`money ${isThu ? 'money-pos' : 'money-neg'}`}>{formatMoney(v)}</span>,
     },
     { title: 'Quỹ', dataIndex: 'payment_method_name', width: 110 },
-    { title: 'Ghi chú', dataIndex: 'ghi_chu' },
+    { title: 'Nội dung', dataIndex: 'ghi_chu' },
     {
       title: '',
       width: 90,
@@ -245,8 +278,9 @@ function VoucherTable({
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="Chọn lô hàng nếu có"
+              placeholder="Chọn lô hàng nếu có — chọn xong sẽ tự điền Nội dung và Số tiền (tổng)"
               options={shipments.map((s) => ({ value: s.id, label: `${s.ma_lo} — ${s.customer_name || ''}` }))}
+              onChange={(shipmentId) => onShipmentPick(shipmentId)}
             />
           </Form.Item>
           <Form.Item label="Ngày chứng từ" name="ngay_ct">
@@ -258,7 +292,7 @@ function VoucherTable({
           <Form.Item label={isThu ? 'Thu vào quỹ' : 'Chi từ quỹ'} name="payment_method_id">
             <Select options={paymentMethods.map((p) => ({ label: p.name, value: p.id }))} allowClear />
           </Form.Item>
-          <Form.Item label="Ghi chú" name="ghi_chu">
+          <Form.Item label="Nội dung" name="ghi_chu">
             <Input />
           </Form.Item>
         </Form>

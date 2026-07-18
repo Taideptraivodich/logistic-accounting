@@ -65,6 +65,20 @@ export default function CongNoKH() {
     }
   };
 
+  // Chọn "Lô hàng liên kết" -> tự gen Nội dung + Số tiền (cước DV + chi hộ), giống màn Phiếu thu/chi.
+  const onShipmentPick = async (shipmentId) => {
+    if (!shipmentId) return;
+    try {
+      const { data: s } = await api.get(`/shipments/${shipmentId}`);
+      const tkPart = s.so_to_khai ? `TK ${s.so_to_khai} - ` : '';
+      const soTien = (s.cuoc_dv || 0) + (s.tong_chi_ho || 0);
+      const ghiChu = `${tkPart}Thu cước ${s.customer_name || ''} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
+      form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu });
+    } catch {
+      // Không chặn luồng nhập liệu nếu lấy chi tiết lô hàng thất bại.
+    }
+  };
+
   const handleCreateReceipt = async () => {
     try {
       const v = await form.validateFields();
@@ -193,7 +207,7 @@ export default function CongNoKH() {
   const receiptColumns = [
     { title: 'Số CT', dataIndex: 'so_ct', width: 110 },
     { title: 'Ngày', dataIndex: 'ngay_ct', width: 110 },
-    { title: 'Ghi chú', dataIndex: 'ghi_chu' },
+    { title: 'Nội dung', dataIndex: 'ghi_chu' },
     {
       title: 'Số tiền',
       dataIndex: 'so_tien',
@@ -319,10 +333,11 @@ export default function CongNoKH() {
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="Chọn lô hàng nếu có"
+              placeholder="Chọn lô hàng nếu có — chọn xong sẽ tự điền Nội dung và Số tiền (tổng)"
               options={shipments
                 .filter((s) => !detail || s.customer_id === detail.id)
                 .map((s) => ({ value: s.id, label: `${s.ma_lo} — ${s.customer_name || ''}` }))}
+              onChange={onShipmentPick}
             />
           </Form.Item>
           <Form.Item label="Số tiền" name="so_tien" rules={[{ required: true }]}>
@@ -335,7 +350,7 @@ export default function CongNoKH() {
           <Form.Item label="Thu vào quỹ" name="payment_method_id">
             <Select options={paymentMethods.map((p) => ({ label: p.name, value: p.id }))} allowClear />
           </Form.Item>
-          <Form.Item label="Ghi chú" name="ghi_chu">
+          <Form.Item label="Nội dung" name="ghi_chu">
             <Input />
           </Form.Item>
         </Form>

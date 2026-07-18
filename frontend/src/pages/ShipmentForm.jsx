@@ -227,7 +227,7 @@ export default function ShipmentForm() {
         <span>
           Đã thanh toán?{' '}
           <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-            (chỉ đánh dấu, không tự tạo phiếu chi)
+            (tick sẽ tự tạo phiếu chi khi Lưu)
           </Typography.Text>
         </span>
       ),
@@ -271,70 +271,24 @@ export default function ShipmentForm() {
     },
     {
       title: '',
-      width: 160,
+      width: 50,
       render: (_, row) => (
-        <Space size={4}>
-          {isEdit && (
-            <Button
-              size="small"
-              type="link"
-              style={{ padding: 0 }}
-              onClick={() => quickCreatePaymentForCharge(row)}
-              title="Tạo phiếu chi cho dòng này"
-            >
-              Tạo phiếu chi
-            </Button>
-          )}
-          <Popconfirm title="Xoá dòng chi phí này?" onConfirm={() => removeCharge(row.key)}>
-            <Button type="text" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
+        <Popconfirm title="Xoá dòng chi phí này?" onConfirm={() => removeCharge(row.key)}>
+          <Button type="text" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
       ),
     },
   ];
 
-  // Điều hướng sang màn "Phiếu thu / chi" kèm dữ liệu điền sẵn (khách hàng/NCC, số tiền, quỹ,
-  // lô hàng liên kết, nội dung gợi ý) và tự mở modal "Tạo phiếu" luôn — đỡ phải tự gõ lại từ đầu.
-  const quickCreateReceiptForCuoc = () => {
-    const customerId = form.getFieldValue('customer_id');
-    if (!customerId) {
-      message.warning('Vui lòng chọn khách hàng trước');
-      return;
-    }
-    const pm = form.getFieldValue('cuoc_payment_method_id');
-    const params = new URLSearchParams({
-      tab: 'thu',
-      new: '1',
-      customer_id: String(customerId),
-      amount: String(cuocDv || 0),
-      ghi_chu: `Thu cước dịch vụ - Lô hàng ${maLo || ''}`.trim(),
-    });
-    if (id) params.set('shipment_id', String(id));
-    if (pm) params.set('payment_method_id', String(pm));
-    navigate(`/vouchers?${params.toString()}`);
-  };
-
-  const quickCreatePaymentForCharge = (row) => {
-    if (!row.supplier_id) {
-      message.warning('Vui lòng chọn nhà cung cấp cho dòng chi phí này trước');
-      return;
-    }
-    const params = new URLSearchParams({
-      tab: 'chi',
-      new: '1',
-      supplier_id: String(row.supplier_id),
-      amount: String(row.so_tien || 0),
-      ghi_chu: `${row.loai_phi || 'Chi phí'} - Lô hàng ${maLo || ''}`.trim(),
-    });
-    if (id) params.set('shipment_id', String(id));
-    if (row.payment_method_id) params.set('payment_method_id', String(row.payment_method_id));
-    navigate(`/vouchers?${params.toString()}`);
-  };
+  // v2: KHÔNG còn điều hướng sang màn Phiếu thu/chi để tạo tay nữa — tick "Đã thu" (cước) /
+  // "Đã thanh toán" (từng dòng chi phí) rồi Lưu là backend tự tạo phiếu thật (xem
+  // regenerateAutoVouchers trong backend/src/routes/shipments.js). Phiếu tạo tay vẫn làm được
+  // bình thường ở màn "Phiếu thu / chi" hoặc "Công nợ KH/NCC" như trước, độc lập với cơ chế này.
 
   const linkedColumns = (isThu) => [
     { title: 'Số CT', dataIndex: 'so_ct', width: 110 },
     { title: 'Ngày', dataIndex: 'ngay_ct', width: 110 },
-    { title: 'Ghi chú', dataIndex: 'ghi_chu' },
+    { title: 'Nội dung', dataIndex: 'ghi_chu' },
     {
       title: 'Số tiền',
       dataIndex: 'so_tien',
@@ -445,21 +399,24 @@ export default function ShipmentForm() {
               <InputNumber {...moneyProps} />
             </Form.Item>
             <Form.Item
-              label="Quỹ thu cước (dự kiến)"
+              label="Quỹ thu cước"
               name="cuoc_payment_method_id"
-              tooltip="Chỉ để ghi nhớ — không tự tạo phiếu thu. Bấm 'Tạo phiếu thu cước' bên cạnh (hoặc vào màn 'Phiếu thu / chi') để tạo phiếu thu thật khi đã nhận tiền."
+              tooltip="Quỹ nhận tiền cước. Tick 'Đã thu?' bên cạnh rồi Lưu để tự tạo phiếu thu thật vào quỹ này."
             >
               <Select
                 allowClear
                 placeholder="Chọn quỹ"
-                style={{ width: 'calc(100% - 108px)' }}
                 options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))}
               />
-              {isEdit && (
-                <Button size="small" style={{ marginLeft: 8 }} onClick={quickCreateReceiptForCuoc}>
-                  Tạo phiếu thu cước
-                </Button>
-              )}
+            </Form.Item>
+            <Form.Item
+              label="Đã thu?"
+              name="cuoc_thu_ngay"
+              valuePropName="checked"
+              initialValue={false}
+              tooltip="Tick khi đã thu tiền cước thật — Lưu sẽ tự tạo phiếu thu (nội dung tự sinh theo mẫu 'Thu cước ...'). Bỏ tick rồi Lưu sẽ tự xoá phiếu thu tương ứng."
+            >
+              <Checkbox>Đã thu tiền cước</Checkbox>
             </Form.Item>
             <Form.Item label="Ghi chú" name="ghi_chu" style={{ gridColumn: 'span 2' }}>
               <Input />
@@ -480,10 +437,11 @@ export default function ShipmentForm() {
           <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
 
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-            Lưu ý: lưu lô hàng KHÔNG tự tạo phiếu thu/phiếu chi. Vào menu "Phiếu thu / chi" để tạo
-            phiếu thật khi đã thu tiền khách hoặc đã chi tiền cho NCC (có thể chọn "Lô hàng liên kết"
-            để gắn về lô này), hoặc dùng các nút "Tạo phiếu thu cước" / "Tạo phiếu chi" ở trên — dữ
-            liệu (đối tượng, số tiền, quỹ, nội dung) sẽ được điền sẵn.
+            Lưu ý: Lưu lô hàng sẽ tự tạo (hoặc cập nhật lại) phiếu thu/phiếu chi thật cho những
+            khoản đã tick "Đã thu?" (cước) / "Đã thanh toán?" (từng dòng chi phí) — nội dung tự
+            sinh theo mẫu "TK {'{'}số tờ khai{'}'} - Thu cước/Chi {'{...}'} - {'{'}mã lô{'}'}". Bỏ tick rồi Lưu sẽ tự
+            xoá phiếu tương ứng. Vẫn có thể tạo phiếu tay khác (không gắn theo cơ chế này) ở menu
+            "Phiếu thu / chi" hoặc "Công nợ KH/NCC".
           </Typography.Text>
 
           {isEdit && (

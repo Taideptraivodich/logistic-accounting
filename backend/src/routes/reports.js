@@ -329,9 +329,10 @@ router.get('/so-quy', (req, res) => {
       db
         .prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE payment_method_id = ?`)
         .get(pm.id).t || 0;
-    // Lưu ý: khi chi phí lô hàng được đánh dấu "đã thanh toán", hệ thống tự sinh
-    // 1 bản ghi trong supplier_payments — nên chỉ cần tính tổng từ supplier_payments
-    // để tránh đếm trùng với shipment_charges.
+    // Lưu ý (v2): khi chi phí lô hàng được đánh dấu "đã thanh toán" (hoặc cước được tick "đã thu"),
+    // hệ thống tự sinh 1 bản ghi auto_generated=1 trong supplier_payments/customer_receipts (xem
+    // regenerateAutoVouchers trong routes/shipments.js) — nên chỉ cần tính tổng từ 2 bảng này để
+    // tránh đếm trùng với shipment_charges.
     const chi =
       db
         .prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments WHERE payment_method_id = ?`)

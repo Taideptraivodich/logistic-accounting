@@ -25,8 +25,10 @@ function buildDefaultGhiChu({ isThu, ownerName, categoryName, maLo }) {
 }
 
 // ================= PHIẾU THU KHÁCH HÀNG (hoặc "thu khác" không gắn khách hàng) =================
-// Ghi chú: KHÔNG còn tự sinh từ lô hàng nữa — Senior luôn tạo tay tại đây (kể cả khi thu cước
-// một lô hàng cụ thể, chọn "Khách hàng" + tuỳ chọn gắn "Lô hàng liên kết").
+// Ghi chú (v2): route này vẫn dùng cho phiếu Senior tự tạo tay tại màn "Phiếu thu / chi" (chọn
+// "Khách hàng" + tuỳ chọn gắn "Lô hàng liên kết"). Ngoài ra, từ đợt "tự sinh phiếu thu/chi từ Lô
+// hàng (v2)", tick "Đã thu" ở màn Lô hàng sẽ tự tạo thêm 1 phiếu thu auto_generated=1 riêng qua
+// backend/src/routes/shipments.js (xem regenerateAutoVouchers) — không đi qua route POST này.
 router.get('/receipts', (req, res) => {
   const { customer_id, category_id, payment_method_id, q } = req.query;
   let sql = `

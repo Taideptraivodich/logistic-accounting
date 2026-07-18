@@ -74,7 +74,9 @@ CREATE TABLE IF NOT EXISTS voucher_categories (
 
 -- ================= PHIẾU THU KHÁCH HÀNG (hoặc thu khác) =================
 -- customer_id NULL khi đây là 1 khoản "thu khác" (category_id) không gắn khách hàng cụ thể.
--- KHÔNG còn tự sinh từ lô hàng — Senior tạo tay tại màn Phiếu thu / chi.
+-- auto_generated=1: phiếu do hệ thống tự tạo khi tick "Đã thu" ở màn Lô hàng (v2) — bị xoá/tạo
+-- lại mỗi khi lô hàng liên quan được lưu, xem regenerateAutoVouchers trong routes/shipments.js.
+-- auto_generated=0: Senior tự tạo tay tại màn Phiếu thu / chi (hoặc Công nợ KH).
 CREATE TABLE IF NOT EXISTS customer_receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   so_ct TEXT NOT NULL UNIQUE,
@@ -85,12 +87,15 @@ CREATE TABLE IF NOT EXISTS customer_receipts (
   so_tien REAL DEFAULT 0,
   payment_method_id INTEGER REFERENCES payment_methods(id),
   ghi_chu TEXT,
+  auto_generated INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- ================= PHIẾU CHI NHÀ CUNG CẤP (hoặc chi khác) =================
 -- supplier_id NULL khi đây là 1 khoản "chi khác" (category_id), ví dụ chi in hồ sơ,
--- mua văn phòng phẩm... KHÔNG còn tự sinh từ lô hàng — Senior tạo tay tại màn Phiếu thu / chi.
+-- mua văn phòng phẩm... auto_generated=1: phiếu tự tạo khi tick "Đã thanh toán" cho 1 dòng chi
+-- phí ở màn Lô hàng (v2) — bị xoá/tạo lại mỗi khi lô hàng liên quan được lưu. auto_generated=0:
+-- Senior tự tạo tay tại màn Phiếu thu / chi (hoặc Công nợ NCC).
 CREATE TABLE IF NOT EXISTS supplier_payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   so_ct TEXT NOT NULL UNIQUE,
@@ -101,6 +106,7 @@ CREATE TABLE IF NOT EXISTS supplier_payments (
   so_tien REAL DEFAULT 0,
   payment_method_id INTEGER REFERENCES payment_methods(id),
   ghi_chu TEXT,
+  auto_generated INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
