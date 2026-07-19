@@ -1,36 +1,58 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  Form, Input, InputNumber, Select, DatePicker, Button,
-  Table, Space, message, Typography, Card, Row, Col, Alert,
-} from 'antd';
-import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined, SyncOutlined, PrinterOutlined } from '@ant-design/icons';
-import dayjs from 'dayjs';
-import api from '../api/client';
-import { formatMoney } from '../utils/format';
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  DatePicker,
+  Button,
+  Table,
+  Space,
+  message,
+  Typography,
+  Card,
+  Row,
+  Col,
+  Alert,
+} from "antd";
+import {
+  PlusOutlined,
+  DeleteOutlined,
+  ArrowLeftOutlined,
+  SaveOutlined,
+  SyncOutlined,
+  PrinterOutlined,
+} from "@ant-design/icons";
+import dayjs from "dayjs";
+import api from "../api/client";
+import { formatMoney } from "../utils/format";
 
 const { Title, Text } = Typography;
-const DATE_FMT = 'YYYY-MM-DD';
+const DATE_FMT = "YYYY-MM-DD";
 
 let tempIdCounter = 0;
 const nextTempId = () => `tmp-${Date.now()}-${tempIdCounter++}`;
 
 const VAT_OPTIONS = [
-  { value: null, label: 'No VAT' },
-  { value: 0, label: '0%' },
-  { value: 8, label: '8%' },
-  { value: 10, label: '10%' },
+  { value: null, label: "" },
+  { value: 0, label: "0%" },
+  { value: 8, label: "8%" },
+  { value: 10, label: "10%" },
 ];
 
 const moneyInputProps = {
   min: 0,
-  style: { width: '100%' },
-  formatter: (val) => (val === undefined || val === null ? '' : `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')),
-  parser: (val) => (val ? val.replace(/,/g, '') : ''),
+  style: { width: "100%" },
+  formatter: (val) =>
+    val === undefined || val === null
+      ? ""
+      : `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ","),
+  parser: (val) => (val ? val.replace(/,/g, "") : ""),
 };
 
 function normalizeChargeType(t) {
-  return t === 'DISBURSEMENT' ? 'DISBURSEMENT' : 'SERVICE';
+  return t === "DISBURSEMENT" ? "DISBURSEMENT" : "SERVICE";
 }
 
 // Chuyển 1 dòng "gợi ý" (từ GET /debit-notes/suggest-lines, thực chất là 1 row của
@@ -43,7 +65,7 @@ const chargeToLine = (l) => ({
   so_luong: l.so_luong,
   don_gia: l.don_gia,
   vat_percent: l.vat_percent,
-  so_hoa_don: '',
+  so_hoa_don: "",
   ghi_chu: l.ghi_chu,
   source_charge_id: l.source_charge_id,
   charge_type: normalizeChargeType(l.charge_type),
@@ -77,16 +99,22 @@ const dnLineToLocal = (l) => ({
 // so khớp tạm theo Mô tả (không phân biệt hoa/thường, bỏ khoảng trắng thừa) để tránh cộng trùng
 // khi bấm "Đồng bộ" nhiều lần.
 function findNewLinesFromShipment(currentLines, suggestedRows) {
-  const bySource = new Set(currentLines.filter((l) => l.source_charge_id).map((l) => l.source_charge_id));
+  const bySource = new Set(
+    currentLines
+      .filter((l) => l.source_charge_id)
+      .map((l) => l.source_charge_id),
+  );
   const byDesc = new Set(
-    currentLines.filter((l) => !l.source_charge_id).map((l) => (l.mo_ta || '').trim().toLowerCase())
+    currentLines
+      .filter((l) => !l.source_charge_id)
+      .map((l) => (l.mo_ta || "").trim().toLowerCase()),
   );
   const result = [];
   (suggestedRows || []).forEach((l) => {
     if (l.source_charge_id) {
       if (bySource.has(l.source_charge_id)) return;
     } else {
-      const key = (l.mo_ta || '').trim().toLowerCase();
+      const key = (l.mo_ta || "").trim().toLowerCase();
       if (byDesc.has(key)) return;
     }
     result.push(chargeToLine(l));
@@ -98,10 +126,15 @@ function computeTotals(lines) {
   return lines.reduce(
     (acc, l) => {
       const thanhTien = (l.don_gia || 0) * (l.so_luong || 0);
-      const vatAmount = l.vat_percent != null ? (thanhTien * l.vat_percent) / 100 : 0;
-      return { thanh_tien: acc.thanh_tien + thanhTien, vat: acc.vat + vatAmount, tong_cong: acc.tong_cong + thanhTien + vatAmount };
+      const vatAmount =
+        l.vat_percent != null ? (thanhTien * l.vat_percent) / 100 : 0;
+      return {
+        thanh_tien: acc.thanh_tien + thanhTien,
+        vat: acc.vat + vatAmount,
+        tong_cong: acc.tong_cong + thanhTien + vatAmount,
+      };
     },
-    { thanh_tien: 0, vat: 0, tong_cong: 0 }
+    { thanh_tien: 0, vat: 0, tong_cong: 0 },
   );
 }
 
@@ -109,55 +142,105 @@ function computeTotals(lines) {
 // (chỉ có nghĩa với Chi hộ, nơi NCC/Hải quan xuất hoá đơn cho khoản chi hộ đó).
 function buildLineColumns(withInvoiceCol, updateLine, removeLine) {
   return [
-    { title: 'STT', width: 50, render: (_, __, idx) => idx + 1 },
+    { title: "STT", width: 50, render: (_, __, idx) => idx + 1 },
     {
-      title: 'Chi tiết',
-      dataIndex: 'mo_ta',
-      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'mo_ta', e.target.value)} placeholder="Mô tả" />,
+      title: "Chi tiết",
+      dataIndex: "mo_ta",
+      render: (v, r) => (
+        <Input
+          value={v}
+          onChange={(e) => updateLine(r.key, "mo_ta", e.target.value)}
+          placeholder="Mô tả"
+        />
+      ),
     },
     {
-      title: 'ĐVT',
-      dataIndex: 'don_vi_tinh',
+      title: "ĐVT",
+      dataIndex: "don_vi_tinh",
       width: 100,
-      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'don_vi_tinh', e.target.value)} />,
+      render: (v, r) => (
+        <Input
+          value={v}
+          onChange={(e) => updateLine(r.key, "don_vi_tinh", e.target.value)}
+        />
+      ),
     },
     {
-      title: 'Đơn giá',
-      dataIndex: 'don_gia',
+      title: "Đơn giá",
+      dataIndex: "don_gia",
       width: 130,
-      render: (v, r) => <InputNumber {...moneyInputProps} value={v} onChange={(val) => updateLine(r.key, 'don_gia', val || 0)} />,
+      render: (v, r) => (
+        <InputNumber
+          {...moneyInputProps}
+          value={v}
+          onChange={(val) => updateLine(r.key, "don_gia", val || 0)}
+        />
+      ),
     },
     {
-      title: 'SL',
-      dataIndex: 'so_luong',
+      title: "SL",
+      dataIndex: "so_luong",
       width: 70,
-      render: (v, r) => <InputNumber style={{ width: '100%' }} min={0} value={v} onChange={(val) => updateLine(r.key, 'so_luong', val || 0)} />,
+      render: (v, r) => (
+        <InputNumber
+          style={{ width: "100%" }}
+          min={0}
+          value={v}
+          onChange={(val) => updateLine(r.key, "so_luong", val || 0)}
+        />
+      ),
     },
     {
-      title: 'VAT',
-      dataIndex: 'vat_percent',
+      title: "VAT",
+      dataIndex: "vat_percent",
       width: 100,
-      render: (v, r) => <Select style={{ width: '100%' }} value={v} options={VAT_OPTIONS} onChange={(val) => updateLine(r.key, 'vat_percent', val)} />,
+      render: (v, r) => (
+        <Select
+          style={{ width: "100%" }}
+          value={v}
+          options={VAT_OPTIONS}
+          onChange={(val) => updateLine(r.key, "vat_percent", val)}
+        />
+      ),
     },
     ...(withInvoiceCol
       ? [
           {
-            title: 'Số hoá đơn',
-            dataIndex: 'so_hoa_don',
+            title: "Số hoá đơn",
+            dataIndex: "so_hoa_don",
             width: 110,
-            render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'so_hoa_don', e.target.value)} />,
+            render: (v, r) => (
+              <Input
+                value={v}
+                onChange={(e) =>
+                  updateLine(r.key, "so_hoa_don", e.target.value)
+                }
+              />
+            ),
           },
         ]
       : []),
     {
-      title: 'Ghi chú',
-      dataIndex: 'ghi_chu',
-      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'ghi_chu', e.target.value)} />,
+      title: "Ghi chú",
+      dataIndex: "ghi_chu",
+      render: (v, r) => (
+        <Input
+          value={v}
+          onChange={(e) => updateLine(r.key, "ghi_chu", e.target.value)}
+        />
+      ),
     },
     {
-      title: '',
+      title: "",
       width: 40,
-      render: (_, r) => <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeLine(r.key)} />,
+      render: (_, r) => (
+        <Button
+          size="small"
+          danger
+          icon={<DeleteOutlined />}
+          onClick={() => removeLine(r.key)}
+        />
+      ),
     },
   ];
 }
@@ -170,17 +253,41 @@ function buildLineColumns(withInvoiceCol, updateLine, removeLine) {
 // DUY NHẤT nằm ở vùng "Chi tiết chi phí", tách làm 2 bảng con (Cước dịch vụ / Chi hộ) trên CÙNG 1
 // mảng `lines` phẳng (mỗi dòng tự mang charge_type SERVICE/DISBURSEMENT) — giống hệt cách tab
 // "Debit Note (thu khách)" ở ShipmentForm.jsx đã làm (xem CustomerChargesTab ở đó).
-function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, totals, extraHeader }) {
-  const updateLine = (key, field, value) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, [field]: value } : l)));
+function DebitNoteBody({
+  form,
+  lines,
+  setLines,
+  paymentMethods,
+  customers,
+  totals,
+  extraHeader,
+}) {
+  const updateLine = (key, field, value) =>
+    setLines((prev) =>
+      prev.map((l) => (l.key === key ? { ...l, [field]: value } : l)),
+    );
   const addLine = (chargeType) =>
     setLines((prev) => [
       ...prev,
-      { key: nextTempId(), mo_ta: '', don_vi_tinh: '', so_luong: 1, don_gia: 0, vat_percent: null, so_hoa_don: '', ghi_chu: '', charge_type: chargeType },
+      {
+        key: nextTempId(),
+        mo_ta: "",
+        don_vi_tinh: "",
+        so_luong: 1,
+        don_gia: 0,
+        vat_percent: null,
+        so_hoa_don: "",
+        ghi_chu: "",
+        charge_type: chargeType,
+      },
     ]);
-  const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
+  const removeLine = (key) =>
+    setLines((prev) => prev.filter((l) => l.key !== key));
 
-  const serviceLines = lines.filter((l) => l.charge_type !== 'DISBURSEMENT');
-  const disbursementLines = lines.filter((l) => l.charge_type === 'DISBURSEMENT');
+  const serviceLines = lines.filter((l) => l.charge_type !== "DISBURSEMENT");
+  const disbursementLines = lines.filter(
+    (l) => l.charge_type === "DISBURSEMENT",
+  );
   const serviceColumns = buildLineColumns(false, updateLine, removeLine);
   const disbursementColumns = buildLineColumns(true, updateLine, removeLine);
 
@@ -191,10 +298,12 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
   const onPickPaymentMethod = (region) => (pmId) => {
     const pm = paymentMethods.find((p) => p.id === pmId);
     if (!pm) return;
-    const prefix = region === 'chi_ho' ? 'chi_ho_bank_' : 'dv_bank_';
+    const prefix = region === "chi_ho" ? "chi_ho_bank_" : "dv_bank_";
     form.setFieldsValue({
-      [`${prefix}account_name`]: pm.bank_account_name || form.getFieldValue(`${prefix}account_name`),
-      [`${prefix}account_number`]: pm.bank_account_number || form.getFieldValue(`${prefix}account_number`),
+      [`${prefix}account_name`]:
+        pm.bank_account_name || form.getFieldValue(`${prefix}account_name`),
+      [`${prefix}account_number`]:
+        pm.bank_account_number || form.getFieldValue(`${prefix}account_number`),
       [`${prefix}name`]: pm.bank_name || form.getFieldValue(`${prefix}name`),
       [`${prefix}swift`]: pm.bank_swift || form.getFieldValue(`${prefix}swift`),
     });
@@ -204,10 +313,10 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
   // dịch vụ sang Chi hộ, Senior không cần gõ/chọn lại từ đầu.
   const copyServiceBankToDisbursement = () => {
     form.setFieldsValue({
-      chi_ho_bank_account_name: form.getFieldValue('dv_bank_account_name'),
-      chi_ho_bank_account_number: form.getFieldValue('dv_bank_account_number'),
-      chi_ho_bank_name: form.getFieldValue('dv_bank_name'),
-      chi_ho_bank_swift: form.getFieldValue('dv_bank_swift'),
+      chi_ho_bank_account_name: form.getFieldValue("dv_bank_account_name"),
+      chi_ho_bank_account_number: form.getFieldValue("dv_bank_account_number"),
+      chi_ho_bank_name: form.getFieldValue("dv_bank_name"),
+      chi_ho_bank_swift: form.getFieldValue("dv_bank_swift"),
     });
   };
 
@@ -217,23 +326,43 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
         <Row gutter={16}>
           <Col span={8}>
             <Form.Item label="Ngày chứng từ" name="ngay_ct">
-              <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+              <DatePicker style={{ width: "100%" }} format="DD/MM/YYYY" />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item label="Khách hàng" name="customer_id" rules={[{ required: true, message: 'Chọn khách hàng' }]}>
-              <Select showSearch optionFilterProp="label" placeholder="Chọn khách hàng" options={customers.map((c) => ({ value: c.id, label: c.name }))} />
+            <Form.Item
+              label="Khách hàng"
+              name="customer_id"
+              rules={[{ required: true, message: "Chọn khách hàng" }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder="Chọn khách hàng"
+                options={customers.map((c) => ({ value: c.id, label: c.name }))}
+              />
             </Form.Item>
           </Col>
           <Col span={8}>{extraHeader}</Col>
         </Row>
       </Card>
 
-      <Card title="Thông tin nhận tiền — Cước dịch vụ" style={{ marginBottom: 16 }}>
+      <Card
+        title="Thông tin nhận tiền — Cước dịch vụ"
+        style={{ marginBottom: 16 }}
+      >
         <Row gutter={16}>
           <Col span={6}>
             <Form.Item label="Chọn quỹ để tự điền TK ngân hàng">
-              <Select allowClear placeholder="Chọn quỹ" options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))} onChange={onPickPaymentMethod('dv')} />
+              <Select
+                allowClear
+                placeholder="Chọn quỹ"
+                options={paymentMethods.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                }))}
+                onChange={onPickPaymentMethod("dv")}
+              />
             </Form.Item>
           </Col>
           <Col span={6}>
@@ -271,7 +400,15 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
         <Row gutter={16}>
           <Col span={6}>
             <Form.Item label="Chọn quỹ để tự điền TK ngân hàng">
-              <Select allowClear placeholder="Chọn quỹ" options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))} onChange={onPickPaymentMethod('chi_ho')} />
+              <Select
+                allowClear
+                placeholder="Chọn quỹ"
+                options={paymentMethods.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                }))}
+                onChange={onPickPaymentMethod("chi_ho")}
+              />
             </Form.Item>
           </Col>
           <Col span={6}>
@@ -318,32 +455,73 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
-        <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
+        <Space
+          style={{
+            width: "100%",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
           <Title level={5} style={{ margin: 0 }}>
             Cước dịch vụ
           </Title>
-          <Button icon={<PlusOutlined />} onClick={() => addLine('SERVICE')}>
+          <Button icon={<PlusOutlined />} onClick={() => addLine("SERVICE")}>
             Thêm dòng Cước dịch vụ
           </Button>
         </Space>
-        <Table rowKey="key" dataSource={serviceLines} columns={serviceColumns} pagination={false} size="small" />
+        <Table
+          rowKey="key"
+          dataSource={serviceLines}
+          columns={serviceColumns}
+          pagination={false}
+          size="small"
+        />
       </Card>
 
       <Card>
-        <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
+        <Space
+          style={{
+            width: "100%",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
           <Title level={5} style={{ margin: 0 }}>
             Chi hộ
           </Title>
-          <Button icon={<PlusOutlined />} onClick={() => addLine('DISBURSEMENT')}>
+          <Button
+            icon={<PlusOutlined />}
+            onClick={() => addLine("DISBURSEMENT")}
+          >
             Thêm dòng Chi hộ
           </Button>
         </Space>
-        <Table rowKey="key" dataSource={disbursementLines} columns={disbursementColumns} pagination={false} size="small" />
+        <Table
+          rowKey="key"
+          dataSource={disbursementLines}
+          columns={disbursementColumns}
+          pagination={false}
+          size="small"
+        />
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 32, marginTop: 16 }}>
-          <span>Thành tiền: <b className="money">{formatMoney(totals.thanh_tien)}</b></span>
-          <span>Thuế VAT: <b className="money">{formatMoney(totals.vat)}</b></span>
-          <span>Tổng cộng: <b className="money">{formatMoney(totals.tong_cong)}</b></span>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 32,
+            marginTop: 16,
+          }}
+        >
+          <span>
+            Thành tiền:{" "}
+            <b className="money">{formatMoney(totals.thanh_tien)}</b>
+          </span>
+          <span>
+            Thuế VAT: <b className="money">{formatMoney(totals.vat)}</b>
+          </span>
+          <span>
+            Tổng cộng: <b className="money">{formatMoney(totals.tong_cong)}</b>
+          </span>
         </div>
       </Card>
     </>
@@ -355,7 +533,12 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
 // tìm Debit Note NHÁP sẵn có của lô hàng này (GET /debit-notes/by-shipment/:id, backend tự gộp các
 // bản nháp cũ trùng lặp từ trước đợt gộp này nếu có) để sửa tiếp; nếu chưa có thì tự khởi tạo dòng
 // từ Customer Charges (cả 2 vùng) của lô hàng. Lưu là POST/PUT ĐÚNG 1 Debit Note duy nhất.
-function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigate }) {
+function ShipmentDebitNotePanel({
+  shipmentId,
+  customers,
+  paymentMethods,
+  navigate,
+}) {
   const [form] = Form.useForm();
   const [dnId, setDnId] = useState(null);
   const [lockedConfirmed, setLockedConfirmed] = useState([]); // Debit Note cũ đã Xác nhận (nếu có) — không đụng vào
@@ -391,13 +574,18 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
         setDnId(null);
         const [{ data: shipment }, { data: suggest }] = await Promise.all([
           api.get(`/shipments/${shipmentId}`),
-          api.get('/debit-notes/suggest-lines', { params: { shipment_id: shipmentId } }),
+          api.get("/debit-notes/suggest-lines", {
+            params: { shipment_id: shipmentId },
+          }),
         ]);
-        form.setFieldsValue({ ngay_ct: dayjs(), customer_id: shipment.customer_id || undefined });
+        form.setFieldsValue({
+          ngay_ct: dayjs(),
+          customer_id: shipment.customer_id || undefined,
+        });
         setLines((suggest.lines || []).map(chargeToLine));
       }
     } catch {
-      message.error('Không tải được Debit Note của lô hàng này');
+      message.error("Không tải được Debit Note của lô hàng này");
     } finally {
       setLoading(false);
     }
@@ -411,16 +599,20 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
   const syncFromShipment = async () => {
     setSyncing(true);
     try {
-      const { data } = await api.get('/debit-notes/suggest-lines', { params: { shipment_id: shipmentId } });
+      const { data } = await api.get("/debit-notes/suggest-lines", {
+        params: { shipment_id: shipmentId },
+      });
       const toAdd = findNewLinesFromShipment(lines, data.lines);
       if (toAdd.length === 0) {
-        message.info('Không có dòng chi phí mới nào từ lô hàng.');
+        message.info("Không có dòng chi phí mới nào từ lô hàng.");
       } else {
         setLines((prev) => [...prev, ...toAdd]);
-        message.success(`Đã đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng.`);
+        message.success(
+          `Đã đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng.`,
+        );
       }
     } catch {
-      message.error('Không đồng bộ được từ lô hàng');
+      message.error("Không đồng bộ được từ lô hàng");
     } finally {
       setSyncing(false);
     }
@@ -436,7 +628,7 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
       return;
     }
     if (lines.length === 0) {
-      message.error('Cần ít nhất 1 dòng chi phí');
+      message.error("Cần ít nhất 1 dòng chi phí");
       return;
     }
     setSaving(true);
@@ -459,14 +651,14 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
       };
       if (dnId) {
         await api.put(`/debit-notes/${dnId}`, payload);
-        message.success('Đã lưu Debit Note');
+        message.success("Đã lưu Debit Note");
       } else {
-        const { data } = await api.post('/debit-notes', payload);
+        const { data } = await api.post("/debit-notes", payload);
         setDnId(data.id);
-        message.success('Đã tạo Debit Note');
+        message.success("Đã tạo Debit Note");
       }
     } catch (e) {
-      message.error(e?.response?.data?.error || 'Lưu thất bại');
+      message.error(e?.response?.data?.error || "Lưu thất bại");
     } finally {
       setSaving(false);
     }
@@ -479,7 +671,7 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message={`Lô hàng này đã có ${lockedConfirmed.length} Debit Note cũ đã Xác nhận (${lockedConfirmed.map((c) => c.so_dn).join(', ')})`}
+          message={`Lô hàng này đã có ${lockedConfirmed.length} Debit Note cũ đã Xác nhận (${lockedConfirmed.map((c) => c.so_dn).join(", ")})`}
           description="Không thuộc bản nháp đang sửa ở đây. Vào danh sách Debit Note để xem/in, hoặc Huỷ xác nhận trước nếu cần gộp/sửa lại."
         />
       )}
@@ -493,19 +685,38 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
           totals={totals}
           extraHeader={
             <Form.Item label=" ">
-              <Button icon={<SyncOutlined spin={syncing} />} onClick={syncFromShipment} loading={syncing}>
+              <Button
+                icon={<SyncOutlined spin={syncing} />}
+                onClick={syncFromShipment}
+                loading={syncing}
+              >
                 Đồng bộ từ lô hàng
               </Button>
             </Form.Item>
           }
         />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            marginTop: 16,
+          }}
+        >
           {dnId && (
-            <Button icon={<PrinterOutlined />} onClick={() => navigate(`/debit-notes/${dnId}/print`)}>
+            <Button
+              icon={<PrinterOutlined />}
+              onClick={() => navigate(`/debit-notes/${dnId}/print`)}
+            >
               Xem / In
             </Button>
           )}
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            onClick={handleSave}
+          >
             Lưu Debit Note
           </Button>
         </div>
@@ -518,7 +729,7 @@ export default function DebitNoteForm() {
   const { id } = useParams();
   const isEdit = !!id;
   const [searchParams] = useSearchParams();
-  const prefillShipmentId = searchParams.get('shipment_id');
+  const prefillShipmentId = searchParams.get("shipment_id");
   const navigate = useNavigate();
   const [form] = Form.useForm();
 
@@ -532,16 +743,22 @@ export default function DebitNoteForm() {
   const [dnShipmentId, setDnShipmentId] = useState(null); // shipment đã lưu sẵn trong Debit Note đang sửa (nếu có)
 
   // Chọn lô hàng khi TẠO MỚI (chưa lưu) — quyết định có chuyển sang panel theo lô hàng hay không.
-  const [newShipmentId, setNewShipmentId] = useState(prefillShipmentId ? Number(prefillShipmentId) : undefined);
+  const [newShipmentId, setNewShipmentId] = useState(
+    prefillShipmentId ? Number(prefillShipmentId) : undefined,
+  );
 
   useEffect(() => {
-    Promise.all([api.get('/shipments'), api.get('/customers'), api.get('/payment-methods')])
+    Promise.all([
+      api.get("/shipments"),
+      api.get("/customers"),
+      api.get("/payment-methods"),
+    ])
       .then(([s, c, p]) => {
         setShipments(s.data);
         setCustomers(c.data);
         setPaymentMethods(p.data);
       })
-      .catch(() => message.error('Không tải được danh mục'));
+      .catch(() => message.error("Không tải được danh mục"));
   }, []);
 
   // ================= CHẾ ĐỘ SỬA 1 DEBIT NOTE THEO ID (vào từ danh sách, nút "Sửa") =============
@@ -551,8 +768,8 @@ export default function DebitNoteForm() {
     api
       .get(`/debit-notes/${id}`)
       .then(async ({ data }) => {
-        if (data.status !== 'draft') {
-          message.warning('Debit Note đã xác nhận, chuyển sang chế độ xem.');
+        if (data.status !== "draft") {
+          message.warning("Debit Note đã xác nhận, chuyển sang chế độ xem.");
           navigate(`/debit-notes/${id}/print`, { replace: true });
           return;
         }
@@ -581,13 +798,18 @@ export default function DebitNoteForm() {
         // "Đồng bộ". Giờ tự động ĐỒNG BỘ (chỉ cộng thêm dòng mới, không xoá gì) ngay khi mở màn Sửa.
         if (data.shipment_id) {
           try {
-            const { data: suggest } = await api.get('/debit-notes/suggest-lines', {
-              params: { shipment_id: data.shipment_id },
-            });
+            const { data: suggest } = await api.get(
+              "/debit-notes/suggest-lines",
+              {
+                params: { shipment_id: data.shipment_id },
+              },
+            );
             const toAdd = findNewLinesFromShipment(loadedLines, suggest.lines);
             if (toAdd.length > 0) {
               setLines((prev) => [...prev, ...toAdd]);
-              message.info(`Đã tự động đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng vào Debit Note này.`);
+              message.info(
+                `Đã tự động đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng vào Debit Note này.`,
+              );
             }
           } catch {
             // Không chặn luồng sửa nếu đồng bộ tự động thất bại (vd mất mạng) — Senior vẫn có nút
@@ -595,7 +817,7 @@ export default function DebitNoteForm() {
           }
         }
       })
-      .catch(() => message.error('Không tải được Debit Note'))
+      .catch(() => message.error("Không tải được Debit Note"))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -606,16 +828,20 @@ export default function DebitNoteForm() {
     if (!dnShipmentId) return;
     setPulling(true);
     try {
-      const { data } = await api.get('/debit-notes/suggest-lines', { params: { shipment_id: dnShipmentId } });
+      const { data } = await api.get("/debit-notes/suggest-lines", {
+        params: { shipment_id: dnShipmentId },
+      });
       const toAdd = findNewLinesFromShipment(lines, data.lines);
       if (toAdd.length === 0) {
-        message.info('Không có dòng chi phí mới nào từ lô hàng.');
+        message.info("Không có dòng chi phí mới nào từ lô hàng.");
       } else {
         setLines((prev) => [...prev, ...toAdd]);
-        message.success(`Đã đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng.`);
+        message.success(
+          `Đã đồng bộ thêm ${toAdd.length} dòng chi phí mới từ lô hàng.`,
+        );
       }
     } catch {
-      message.error('Không đồng bộ được từ lô hàng này');
+      message.error("Không đồng bộ được từ lô hàng này");
     } finally {
       setPulling(false);
     }
@@ -631,7 +857,7 @@ export default function DebitNoteForm() {
       return;
     }
     if (lines.length === 0) {
-      message.error('Cần ít nhất 1 dòng chi phí');
+      message.error("Cần ít nhất 1 dòng chi phí");
       return;
     }
     setSaving(true);
@@ -652,10 +878,10 @@ export default function DebitNoteForm() {
         })),
       };
       await api.put(`/debit-notes/${id}`, payload);
-      message.success('Đã lưu Debit Note');
+      message.success("Đã lưu Debit Note");
       navigate(`/debit-notes/${id}/print`);
     } catch (e) {
-      message.error(e?.response?.data?.error || 'Lưu thất bại');
+      message.error(e?.response?.data?.error || "Lưu thất bại");
     } finally {
       setSaving(false);
     }
@@ -678,7 +904,7 @@ export default function DebitNoteForm() {
       return;
     }
     if (freeLines.length === 0) {
-      message.error('Cần ít nhất 1 dòng chi phí');
+      message.error("Cần ít nhất 1 dòng chi phí");
       return;
     }
     setFreeSaving(true);
@@ -697,11 +923,11 @@ export default function DebitNoteForm() {
           charge_type: l.charge_type,
         })),
       };
-      const { data } = await api.post('/debit-notes', payload);
-      message.success('Đã tạo Debit Note');
+      const { data } = await api.post("/debit-notes", payload);
+      message.success("Đã tạo Debit Note");
       navigate(`/debit-notes/${data.id}/print`);
     } catch (e) {
-      message.error(e?.response?.data?.error || 'Lưu thất bại');
+      message.error(e?.response?.data?.error || "Lưu thất bại");
     } finally {
       setFreeSaving(false);
     }
@@ -711,7 +937,10 @@ export default function DebitNoteForm() {
     return (
       <div>
         <Space style={{ marginBottom: 16 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/debit-notes')}>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate("/debit-notes")}
+          >
             Quay lại
           </Button>
           <Title level={4} style={{ margin: 0 }}>
@@ -725,12 +954,25 @@ export default function DebitNoteForm() {
               <Row gutter={16}>
                 <Col span={8}>
                   <Form.Item label="Lô hàng">
-                    <Input disabled value={shipments.find((s) => s.id === dnShipmentId)?.ma_lo || `#${dnShipmentId}`} />
+                    <Input
+                      disabled
+                      value={
+                        shipments.find((s) => s.id === dnShipmentId)?.ma_lo ||
+                        `#${dnShipmentId}`
+                      }
+                    />
                   </Form.Item>
                 </Col>
-                <Col span={12} style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <Col
+                  span={12}
+                  style={{ display: "flex", alignItems: "flex-end" }}
+                >
                   <Form.Item label=" ">
-                    <Button icon={<SyncOutlined spin={pulling} />} onClick={syncFromShipmentEdit} loading={pulling}>
+                    <Button
+                      icon={<SyncOutlined spin={pulling} />}
+                      onClick={syncFromShipmentEdit}
+                      loading={pulling}
+                    >
                       Đồng bộ từ lô hàng (chỉ thêm dòng mới)
                     </Button>
                   </Form.Item>
@@ -748,9 +990,21 @@ export default function DebitNoteForm() {
             totals={totals}
           />
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-            <Button onClick={() => navigate('/debit-notes')}>Huỷ</Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSaveEdit}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+              marginTop: 16,
+            }}
+          >
+            <Button onClick={() => navigate("/debit-notes")}>Huỷ</Button>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={saving}
+              onClick={handleSaveEdit}
+            >
               Lưu
             </Button>
           </div>
@@ -763,7 +1017,10 @@ export default function DebitNoteForm() {
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/debit-notes')}>
+        <Button
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate("/debit-notes")}
+        >
           Quay lại
         </Button>
         <Title level={4} style={{ margin: 0 }}>
@@ -780,13 +1037,17 @@ export default function DebitNoteForm() {
             optionFilterProp="label"
             placeholder="Chọn lô hàng để tự điền Cước dịch vụ / Chi hộ từ Customer Charges"
             value={newShipmentId}
-            options={shipments.map((s) => ({ value: s.id, label: `${s.ma_lo} — ${s.customer_name || ''}` }))}
+            options={shipments.map((s) => ({
+              value: s.id,
+              label: `${s.ma_lo} — ${s.customer_name || ""}`,
+            }))}
             onChange={(val) => setNewShipmentId(val)}
           />
         </Form.Item>
         {!newShipmentId && (
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Chưa chọn lô hàng: tạo Debit Note tự do (không gắn lô hàng, không có dòng gợi ý sẵn).
+            Chưa chọn lô hàng: tạo Debit Note tự do (không gắn lô hàng, không có
+            dòng gợi ý sẵn).
           </Text>
         )}
       </Card>
@@ -810,9 +1071,21 @@ export default function DebitNoteForm() {
             totals={freeTotals}
           />
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-            <Button onClick={() => navigate('/debit-notes')}>Huỷ</Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={freeSaving} onClick={handleSaveFree}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+              marginTop: 16,
+            }}
+          >
+            <Button onClick={() => navigate("/debit-notes")}>Huỷ</Button>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={freeSaving}
+              onClick={handleSaveFree}
+            >
               Lưu
             </Button>
           </div>
