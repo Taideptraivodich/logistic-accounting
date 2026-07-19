@@ -437,9 +437,13 @@ router.get('/doanh-thu', (req, res) => {
   sql += ' ORDER BY s.ngay_ct, s.id';
   const rows = db.prepare(sql).all(...params);
 
-  // Breakdown DOANH THU theo TỪNG khoản trong Customer Charges (giống bố cục file Excel gốc: mỗi
-  // khoản 1 cột riêng) — thay cho breakdown CHI PHÍ theo loai_phi của shipment_charges cũ, đúng
-  // nguyên tắc "mọi báo cáo doanh thu đọc từ Customer Charges, không đọc từ Shipment.service_fee".
+  // Breakdown DOANH THU theo TỪNG khoản Chi hộ trong Customer Charges (giống bố cục file Excel gốc:
+  // mỗi khoản Chi hộ 1 cột riêng, vd "Lệ phí", "Phí CO", "Phí hạ", "Phí nâng"...) — thay cho
+  // breakdown CHI PHÍ theo loai_phi của shipment_charges cũ. CHỈ lấy charge_type='DISBURSEMENT': các
+  // dòng "Cước dịch vụ" (SERVICE) là khoản THU (giá bán/markup dịch vụ), không phải khoản chi hộ hộ
+  // khách kiểu pass-through — đã được gộp sẵn vào cột "Cước DV" (xem cuoc_dv bên dưới), KHÔNG được
+  // tách thêm thành cột riêng ở đây nữa (trước đây bị lặp: vừa nằm trong "Cước DV", vừa hiện thêm 1
+  // cột riêng kiểu chi phí/âm — gây hiểu nhầm "Phí vận chuyển"/"Phí khai báo HQ" v.v. là chi phí).
   const shipmentIds = rows.map((r) => r.id);
   const byTypeMap = new Map(); // shipment_id -> { mo_ta: so_tien }
   const feeTypeSet = new Set();
@@ -448,7 +452,7 @@ router.get('/doanh-thu', (req, res) => {
     const chargeRows = db
       .prepare(
         `SELECT shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)') as mo_ta, SUM(don_gia * so_luong) as so_tien
-         FROM shipment_customer_charges WHERE shipment_id IN (${placeholders})
+         FROM shipment_customer_charges WHERE shipment_id IN (${placeholders}) AND charge_type = 'DISBURSEMENT'
          GROUP BY shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)')`
       )
       .all(...shipmentIds);
