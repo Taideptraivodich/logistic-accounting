@@ -4,7 +4,7 @@ import {
   Form, Input, InputNumber, Select, DatePicker, Checkbox, Button,
   Table, Space, message, Typography, AutoComplete, Popconfirm, Tabs,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined, FilePdfOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
@@ -33,7 +33,7 @@ const VAT_OPTIONS = [
   { value: 10, label: '10%' },
 ];
 
-function CustomerChargesTab({ shipmentId }) {
+function CustomerChargesTab({ shipmentId, navigate }) {
   const [lines, setLines] = useState([]);
   const [totals, setTotals] = useState({ subtotal: 0, vat: 0, grand_total: 0 });
   const [loading, setLoading] = useState(true);
@@ -183,7 +183,10 @@ function CustomerChargesTab({ shipmentId }) {
         <span>VAT: <b>{formatMoney(localTotals.vat)}</b></span>
         <span>Grand Total: <b>{formatMoney(localTotals.grand_total)}</b></span>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+        <Button icon={<FilePdfOutlined />} onClick={() => navigate(`/debit-notes/new?shipment_id=${shipmentId}`)}>
+          Tạo Debit Note từ đây
+        </Button>
         <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave} disabled={!dirty}>
           Lưu Debit Note
         </Button>
@@ -629,7 +632,7 @@ export default function ShipmentForm() {
                 label: 'Debit Note (thu khách)',
                 disabled: !isEdit,
                 children: isEdit ? (
-                  <CustomerChargesTab shipmentId={id} />
+                  <CustomerChargesTab shipmentId={id} navigate={navigate} />
                 ) : (
                   <Typography.Text type="secondary">Lưu lô hàng trước để dùng tab này.</Typography.Text>
                 ),

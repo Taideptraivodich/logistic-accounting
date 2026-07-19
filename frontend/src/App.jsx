@@ -10,6 +10,7 @@ import {
   FileTextOutlined,
   BarChartOutlined,
   SettingOutlined,
+  FilePdfOutlined,
 } from '@ant-design/icons';
 
 import Dashboard from './pages/Dashboard.jsx';
@@ -21,6 +22,9 @@ import SoQuy from './pages/SoQuy.jsx';
 import DoanhThu from './pages/DoanhThu.jsx';
 import Catalog from './pages/Catalog.jsx';
 import Vouchers from './pages/Vouchers.jsx';
+import DebitNotes from './pages/DebitNotes.jsx';
+import DebitNoteForm from './pages/DebitNoteForm.jsx';
+import DebitNotePrint from './pages/DebitNotePrint.jsx';
 
 const { Header, Sider, Content } = Layout;
 
@@ -31,6 +35,7 @@ const menuItems = [
   { key: '/cong-no-ncc', icon: <ShopOutlined />, label: 'Công nợ Nhà cung cấp' },
   { key: '/so-quy', icon: <WalletOutlined />, label: 'Sổ quỹ' },
   { key: '/vouchers', icon: <FileTextOutlined />, label: 'Phiếu thu / chi' },
+  { key: '/debit-notes', icon: <FilePdfOutlined />, label: 'Debit Note' },
   { key: '/doanh-thu', icon: <BarChartOutlined />, label: 'Doanh thu' },
   { key: '/catalog', icon: <SettingOutlined />, label: 'Danh mục' },
 ];
@@ -46,7 +51,7 @@ function Shell() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} theme="light" width={230}>
+      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} theme="light" width={230} className="no-print">
         <div
           style={{
             height: 56,
@@ -71,6 +76,7 @@ function Shell() {
       </Sider>
       <Layout>
         <Header
+          className="no-print"
           style={{
             background: '#fff',
             padding: '0 20px',
@@ -93,6 +99,10 @@ function Shell() {
             <Route path="/cong-no-ncc" element={<CongNoNCC />} />
             <Route path="/so-quy" element={<SoQuy />} />
             <Route path="/vouchers" element={<Vouchers />} />
+            <Route path="/debit-notes" element={<DebitNotes />} />
+            <Route path="/debit-notes/new" element={<DebitNoteForm />} />
+            <Route path="/debit-notes/:id/edit" element={<DebitNoteForm />} />
+            <Route path="/debit-notes/:id/print" element={<DebitNotePrint />} />
             <Route path="/doanh-thu" element={<DoanhThu />} />
             <Route path="/catalog" element={<Catalog />} />
           </Routes>
