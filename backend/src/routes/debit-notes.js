@@ -62,7 +62,7 @@ function getDebitNoteFull(id) {
 
 // ================= DANH SÁCH =================
 router.get('/', (req, res) => {
-  const { shipment_id, customer_id, status, q } = req.query;
+  const { shipment_id, customer_id, status, q, loai } = req.query;
   let sql = `
     SELECT dn.*,
       (SELECT COALESCE(SUM(l.don_gia * l.so_luong * (1 + COALESCE(l.vat_percent,0)/100.0)), 0)
@@ -72,6 +72,13 @@ router.get('/', (req, res) => {
   if (shipment_id) {
     sql += ' AND dn.shipment_id = ?';
     params.push(shipment_id);
+  }
+  // Lọc theo "loai" (dich_vu/chi_ho) — dùng để tìm Debit Note nháp đã có sẵn của 1 lô hàng cho
+  // đúng loại, phục vụ UI 2 tab "Phí dịch vụ"/"Phí chi hộ" ở DebitNoteForm.jsx (mỗi tab tự tìm và
+  // load lại đúng bản nháp của mình theo shipment_id + loai, không cần Senior tự nhớ chọn).
+  if (loai) {
+    sql += ' AND dn.loai = ?';
+    params.push(loai);
   }
   if (customer_id) {
     sql += ' AND dn.customer_id = ?';
