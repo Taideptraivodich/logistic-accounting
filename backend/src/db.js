@@ -64,6 +64,22 @@ ensureColumn('supplier_payments', 'category_id', 'category_id INTEGER REFERENCES
 ensureColumn('customer_receipts', 'auto_generated', 'auto_generated INTEGER DEFAULT 0');
 ensureColumn('supplier_payments', 'auto_generated', 'auto_generated INTEGER DEFAULT 0');
 
+// Đợt "Domain Model doanh thu sau UAT": Customer Charges cần Charge Type để phục vụ báo cáo
+// (SERVICE/DISBURSEMENT/ADJUSTMENT/DISCOUNT) và để lọc dòng khi tạo Debit Note theo loại. DB đã
+// tồn tại từ trước sẽ chưa có cột này -> ALTER thêm, mặc định 'SERVICE' cho toàn bộ dòng cũ (an
+// toàn, không tự suy luận DISBURSEMENT vì source_charge_id không phải khoá đồng bộ ổn định — xem
+// ghi chú ở schema.sql — Senior tự chọn lại Charge Type cho các dòng "chi hộ" cũ nếu cần báo cáo
+// tách riêng chính xác). SQLite không cho ALTER COLUMN thêm CHECK constraint, ràng buộc giá trị hợp
+// lệ được validate ở tầng ứng dụng (routes/shipments.js).
+ensureColumn('shipment_customer_charges', 'charge_type', "charge_type TEXT NOT NULL DEFAULT 'SERVICE'");
+
+// v3: tách "Đã thu?" / "Quỹ thu cước" thành 2 phần độc lập — Dịch vụ (cột cuoc_* có sẵn, giữ nguyên
+// tên/ý nghĩa cũ) và Chi hộ (2 cột MỚI dưới đây) — vì 2 khoản này thực tế thu về 2 tài khoản khác
+// nhau (xem ghi chú ở schema.sql). DB cũ chưa có 2 cột chi_ho_* -> ALTER thêm, mặc định NULL/0 (an
+// toàn — Senior tự chọn quỹ + tick lại cho từng lô hàng cần thu chi hộ).
+ensureColumn('shipments', 'chi_ho_payment_method_id', 'chi_ho_payment_method_id INTEGER REFERENCES payment_methods(id)');
+ensureColumn('shipments', 'chi_ho_thu_ngay', 'chi_ho_thu_ngay INTEGER DEFAULT 0');
+
 // Chi hộ đôi khi có cả phí nhà xe / phí ra vào cổng (không chỉ thuế, phí HQ, phí CO) —
 // tự thêm loại phí này vào danh mục nếu Senior chưa có, để chọn nhanh khi nhập lô hàng.
 db.exec(`INSERT OR IGNORE INTO fee_types (name) VALUES ('Phí ra vào cổng')`);
@@ -91,6 +107,16 @@ const defaultVoucherCatsChi = [
 const insCat = db.prepare(`INSERT OR IGNORE INTO voucher_categories (name, type) VALUES (?, ?)`);
 for (const name of defaultVoucherCatsChi) insCat.run(name, 'chi');
 insCat.run('Thu khác', 'thu');
+
+// Danh mục "Cước dịch vụ thường dùng" (mục 3a AI_HANDOVER.md) — tự thêm cho DB đã có sẵn của
+// Senior mỗi lần server khởi động (INSERT OR IGNORE theo UNIQUE(name), không tạo trùng), giống
+// cách seed defaultVoucherCatsChi ở trên.
+const defaultServiceCharges = [
+  'Phí khai báo HQ', 'Phí C/O', 'Phí chứng từ', 'Phí vận chuyển',
+  'Phí handling', 'Phí AMS', 'Phí AFR', 'Phí ENS',
+];
+const insServiceCharge = db.prepare(`INSERT OR IGNORE INTO service_charge_catalog (name) VALUES (?)`);
+for (const name of defaultServiceCharges) insServiceCharge.run(name);
 
 // node:sqlite không có db.transaction() như better-sqlite3, nên tự bọc thủ công.
 // Cách dùng: db.transaction(() => { ... các lệnh ghi ... })()

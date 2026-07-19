@@ -3,6 +3,35 @@ const db = require('../db');
 const { nextCode } = require('../utils/nextCode');
 const router = express.Router();
 
+// Loại Debit Note -> Charge Type tương ứng cần lọc khi lấy dòng gợi ý từ Customer Charges của 1 lô
+// hàng (mục 6 yêu cầu sau UAT: "Debit Note Dịch vụ => chỉ lấy SERVICE; Debit Note Chi hộ => chỉ lấy
+// DISBURSEMENT"). ADJUSTMENT/DISCOUNT không tự động kéo vào loại nào — Senior tự thêm dòng tay
+// ("Thêm dòng") vào đúng Debit Note cần điều chỉnh/chiết khấu.
+const LOAI_TO_CHARGE_TYPE = { dich_vu: 'SERVICE', chi_ho: 'DISBURSEMENT' };
+
+// ================= GỢI Ý DÒNG TỪ CUSTOMER CHARGES (lọc theo Charge Type) =================
+// Trả về các dòng shipment_customer_charges của 1 lô hàng, đã lọc đúng Charge Type theo "loai" Debit
+// Note (dich_vu/chi_ho) — dùng để tự điền khi tạo Debit Note. KHÔNG ghi gì vào DB (chỉ đọc).
+router.get('/suggest-lines', (req, res) => {
+  const { shipment_id, loai } = req.query;
+  if (!shipment_id) return res.status(400).json({ error: 'Thiếu shipment_id' });
+  const chargeType = LOAI_TO_CHARGE_TYPE[loai];
+  let rows;
+  if (chargeType) {
+    rows = db
+      .prepare(
+        `SELECT * FROM shipment_customer_charges WHERE shipment_id = ? AND charge_type = ? ORDER BY stt, id`
+      )
+      .all(shipment_id, chargeType);
+  } else {
+    // "loai" không hợp lệ / không truyền -> trả về toàn bộ (giữ hành vi cũ cho tương thích).
+    rows = db
+      .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
+      .all(shipment_id);
+  }
+  res.json({ lines: rows });
+});
+
 // Tính tiền cho 1 dòng: thành_tiền = đơn giá * số lượng, thuế = thành_tiền * vat% (NULL = "No VAT"
 // -> không tính thuế), tổng = thành_tiền + thuế. Tính động lúc đọc (không lưu sẵn trong DB) vì
 // don_gia/so_luong/vat_percent đã tự nó LÀ snapshot bất biến sau khi debit_note.status='confirmed'

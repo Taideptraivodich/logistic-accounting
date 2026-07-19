@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { revenueExpr, sumCustomerChargesByType } = require('../utils/revenue');
 const router = express.Router();
 
 function nextCode(prefix, table, col) {
@@ -31,9 +32,9 @@ function nextCode(prefix, table, col) {
 // (2) chỉ bắt buộc supplier_id khi la_chi_ho=true — cũng sai, thực tế Senior vẫn muốn tự tạo
 // phiếu chi hộ dù chưa chọn NCC. Chốt: KHÔNG có điều kiện supplier_id nào cả, xem vòng lặp charges.
 
-function buildAutoContentThu({ soToKhai, customerName, maLo }) {
+function buildAutoContentThu({ soToKhai, customerName, maLo, label }) {
   const tkPart = soToKhai ? `TK ${soToKhai} - ` : '';
-  return `${tkPart}Thu cước ${customerName || ''} - ${maLo}`.replace(/\s+/g, ' ').trim();
+  return `${tkPart}Thu ${label} ${customerName || ''} - ${maLo}`.replace(/\s+/g, ' ').trim();
 }
 
 function buildAutoContentChi({ soToKhai, loaiPhi, maLo }) {
@@ -43,17 +44,34 @@ function buildAutoContentChi({ soToKhai, loaiPhi, maLo }) {
 
 // Xoá hết phiếu tự sinh cũ đang gắn với lô hàng này, rồi tạo lại theo dữ liệu mới nhất.
 // Gọi bên trong transaction lưu lô hàng, sau khi đã có shipmentId + charges đã lưu.
-function regenerateAutoVouchers(shipmentId, { soToKhai, customerId, customerName, maLo, ngayCt, cuocDv, cuocPaymentMethodId, cuocThuNgay, charges }) {
+function regenerateAutoVouchers(shipmentId, {
+  soToKhai, customerId, customerName, maLo, ngayCt,
+  dichVuAmount, cuocPaymentMethodId, cuocThuNgay,
+  chiHoAmount, chiHoPaymentMethodId, chiHoThuNgay,
+  charges,
+}) {
   db.prepare(`DELETE FROM customer_receipts WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
   db.prepare(`DELETE FROM supplier_payments WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
 
-  if (cuocThuNgay && customerId && (cuocDv || 0) > 0) {
+  // v3: "Cước dịch vụ" và "Chi hộ" là 2 khoản thu ĐỘC LẬP (thường về 2 tài khoản/quỹ khác nhau —
+  // xem 2 mẫu Debit Note PDF gốc, mỗi mẫu ghi 1 "Người thụ hưởng" riêng) -> tự sinh TỐI ĐA 2 phiếu
+  // thu riêng biệt, mỗi phiếu đúng số tiền phần mình (sumCustomerChargesByType — Single Source of
+  // Truth, xem utils/revenue.js), KHÔNG gộp chung 1 phiếu như trước nữa.
+  if (cuocThuNgay && customerId && (dichVuAmount || 0) > 0) {
     const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
-    const ghi_chu = buildAutoContentThu({ soToKhai, customerName, maLo });
+    const ghi_chu = buildAutoContentThu({ soToKhai, customerName, maLo, label: 'cước dịch vụ' });
     db.prepare(
       `INSERT INTO customer_receipts (so_ct, customer_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu, auto_generated)
        VALUES (?,?,?,?,?,?,?,1)`
-    ).run(so_ct, customerId, shipmentId, ngayCt || null, cuocDv, cuocPaymentMethodId || null, ghi_chu);
+    ).run(so_ct, customerId, shipmentId, ngayCt || null, dichVuAmount, cuocPaymentMethodId || null, ghi_chu);
+  }
+  if (chiHoThuNgay && customerId && (chiHoAmount || 0) > 0) {
+    const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
+    const ghi_chu = buildAutoContentThu({ soToKhai, customerName, maLo, label: 'chi hộ' });
+    db.prepare(
+      `INSERT INTO customer_receipts (so_ct, customer_id, shipment_id, ngay_ct, so_tien, payment_method_id, ghi_chu, auto_generated)
+       VALUES (?,?,?,?,?,?,?,1)`
+    ).run(so_ct, customerId, shipmentId, ngayCt || null, chiHoAmount, chiHoPaymentMethodId || null, ghi_chu);
   }
 
   for (const c of charges) {
@@ -79,12 +97,20 @@ function regenerateAutoVouchers(shipmentId, { soToKhai, customerId, customerName
 function copyChargesToCustomerCharges(shipmentId, charges) {
   if (!charges || charges.length === 0) return;
   const insert = db.prepare(
-    `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, ghi_chu)
-     VALUES (?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, charge_type, ghi_chu)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
   );
   charges.forEach((c, idx) => {
-    insert.run(shipmentId, idx + 1, c.id || null, c.loai_phi || '(chưa đặt tên)', null, 1, c.so_tien || 0, null, null);
+    // Chi hộ (la_chi_ho=1) -> charge_type DISBURSEMENT, còn lại mặc định SERVICE. Senior tự sửa lại
+    // Charge Type từng dòng ở tab Debit Note (Customer Charges) nếu cần phân loại ADJUSTMENT/DISCOUNT.
+    const charge_type = c.la_chi_ho ? 'DISBURSEMENT' : 'SERVICE';
+    insert.run(shipmentId, idx + 1, c.id || null, c.loai_phi || '(chưa đặt tên)', null, 1, c.so_tien || 0, null, charge_type, null);
   });
+}
+
+const CHARGE_TYPES = ['SERVICE', 'DISBURSEMENT', 'ADJUSTMENT', 'DISCOUNT'];
+function normalizeChargeType(t) {
+  return CHARGE_TYPES.includes(t) ? t : 'SERVICE';
 }
 
 function withCustomerChargeTotals(rows) {
@@ -108,10 +134,12 @@ function getShipmentFull(id) {
   const shipment = db
     .prepare(
       `SELECT s.*, c.name as customer_name, c.address as customer_address, c.tax_code as customer_tax_code,
-        c.contact_name as customer_contact_name, pm.name as cuoc_payment_method_name
+        c.contact_name as customer_contact_name, pm.name as cuoc_payment_method_name,
+        pm2.name as chi_ho_payment_method_name
        FROM shipments s
        LEFT JOIN customers c ON c.id = s.customer_id
        LEFT JOIN payment_methods pm ON pm.id = s.cuoc_payment_method_id
+       LEFT JOIN payment_methods pm2 ON pm2.id = s.chi_ho_payment_method_id
        WHERE s.id = ?`
     )
     .get(id);
@@ -128,7 +156,11 @@ function getShipmentFull(id) {
     .all(id);
   const tong_chi_phi = charges.reduce((a, c) => a + (c.so_tien || 0), 0);
   const tong_chi_ho = charges.reduce((a, c) => a + (c.la_chi_ho ? c.so_tien || 0 : 0), 0);
-  const doanh_thu = (shipment.cuoc_dv || 0) + tong_chi_ho;
+  // Doanh thu = SUM(Customer Charges) — Single Source of Truth (xem utils/revenue.js). KHÔNG còn
+  // đọc shipment.cuoc_dv. tong_chi_ho ở trên vẫn giữ để hiển thị breakdown phía Cost (tab "Chi phí"),
+  // không liên quan tới công thức doanh thu nữa. doanh_thu_dich_vu/doanh_thu_chi_ho: breakdown theo
+  // charge_type — 2 khoản thu ĐỘC LẬP (thường về 2 quỹ khác nhau, xem regenerateAutoVouchers).
+  const { dichVu: doanh_thu_dich_vu, chiHo: doanh_thu_chi_ho, total: doanh_thu } = sumCustomerChargesByType(id);
   // Phiếu thu/chi liên kết lô hàng này (tạo tay ở màn Phiếu thu/chi) — hiển thị để Senior biết
   // đã thu/chi tiền cho lô này chưa, không phải để tính lại công thức trên.
   const linked_receipts = db
@@ -143,6 +175,8 @@ function getShipmentFull(id) {
     tong_chi_phi,
     tong_chi_ho,
     doanh_thu,
+    doanh_thu_dich_vu,
+    doanh_thu_chi_ho,
     loi_nhuan: doanh_thu - tong_chi_phi,
     linked_receipts,
     linked_payments,
@@ -155,7 +189,8 @@ router.get('/', (req, res) => {
   let sql = `
     SELECT s.*, c.name as customer_name,
       COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id), 0) as tong_chi_phi,
-      COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as tong_chi_ho
+      COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as tong_chi_ho,
+      ${revenueExpr('s.id')} as doanh_thu
     FROM shipments s
     LEFT JOIN customers c ON c.id = s.customer_id
     WHERE 1=1
@@ -180,10 +215,9 @@ router.get('/', (req, res) => {
   }
   sql += ' ORDER BY s.id DESC';
   const rows = db.prepare(sql).all(...params);
-  const result = rows.map((r) => {
-    const doanh_thu = (r.cuoc_dv || 0) + (r.tong_chi_ho || 0);
-    return { ...r, doanh_thu, loi_nhuan: doanh_thu - r.tong_chi_phi };
-  });
+  // Doanh thu = SUM(Customer Charges) — xem revenueExpr trong utils/revenue.js. Lợi nhuận =
+  // Doanh thu - SUM(Supplier Costs), không còn công thức "cuoc_dv + chi_ho - chi_phi" cũ.
+  const result = rows.map((r) => ({ ...r, loi_nhuan: r.doanh_thu - r.tong_chi_phi }));
   res.json(result);
 });
 
@@ -199,7 +233,8 @@ router.post('/', (req, res) => {
   const {
     ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai,
     so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po,
-    cuoc_payment_method_id, cuoc_thu_ngay, charges = [],
+    cuoc_payment_method_id, cuoc_thu_ngay,
+    chi_ho_payment_method_id, chi_ho_thu_ngay, charges = [],
   } = req.body;
 
   if (!customer_id) return res.status(400).json({ error: 'Vui lòng chọn khách hàng' });
@@ -213,14 +248,15 @@ router.post('/', (req, res) => {
     const info = db
       .prepare(
         `INSERT INTO shipments
-         (ma_lo, ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai, so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po, cuoc_payment_method_id, cuoc_thu_ngay)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+         (ma_lo, ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai, so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po, cuoc_payment_method_id, cuoc_thu_ngay, chi_ho_payment_method_id, chi_ho_thu_ngay)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         ma_lo, ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null,
         ngay_to_khai || null, so_container || null, so_luong_cont || null,
         cuoc_dv || 0, ghi_chu || null, status || 'hoan_thanh', po || null,
-        cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0
+        cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0,
+        chi_ho_payment_method_id || null, chi_ho_thu_ngay ? 1 : 0
       );
     const shipmentId = info.lastInsertRowid;
 
@@ -235,7 +271,7 @@ router.post('/', (req, res) => {
         c.supplier_id || null, c.payment_method_id || null,
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );
-      insertedCharges.push({ id: chargeInfo.lastInsertRowid, loai_phi: c.loai_phi, so_tien: c.so_tien || 0 });
+      insertedCharges.push({ id: chargeInfo.lastInsertRowid, loai_phi: c.loai_phi, so_tien: c.so_tien || 0, la_chi_ho: c.la_chi_ho ? 1 : 0 });
     }
 
     // "Debit Note" (Customer Charges): lô hàng MỚI tạo -> tự copy 1 LẦN từ Cost vừa lưu ở trên
@@ -243,13 +279,15 @@ router.post('/', (req, res) => {
     // hoàn toàn — sửa Cost về sau (route PUT bên dưới) KHÔNG đụng tới bảng này nữa.
     copyChargesToCustomerCharges(shipmentId, insertedCharges);
 
-    // v2: tick "Đã thu cước ngay" / "Đã thanh toán?" giờ tự sinh luôn phiếu thu/chi thật
-    // (xem regenerateAutoVouchers ở trên) — không còn chỉ là cờ đánh dấu như đợt trước.
+    // v3: "Cước dịch vụ" và "Chi hộ" tự sinh 2 phiếu thu ĐỘC LẬP, mỗi phiếu đúng số tiền phần
+    // mình (xem regenerateAutoVouchers) — KHÔNG còn dùng cuoc_dv nhập tay.
     const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
+    const { dichVu, chiHo } = sumCustomerChargesByType(shipmentId);
     regenerateAutoVouchers(shipmentId, {
-      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo,
-      ngayCt: ngayCtHieuLuc, cuocDv: cuoc_dv || 0, cuocPaymentMethodId: cuoc_payment_method_id,
-      cuocThuNgay: !!cuoc_thu_ngay, charges,
+      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo, ngayCt: ngayCtHieuLuc,
+      dichVuAmount: dichVu, cuocPaymentMethodId: cuoc_payment_method_id, cuocThuNgay: !!cuoc_thu_ngay,
+      chiHoAmount: chiHo, chiHoPaymentMethodId: chi_ho_payment_method_id, chiHoThuNgay: !!chi_ho_thu_ngay,
+      charges,
     });
 
     return shipmentId;
@@ -264,7 +302,8 @@ router.put('/:id', (req, res) => {
   const {
     ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai,
     so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po,
-    cuoc_payment_method_id, cuoc_thu_ngay, charges = [],
+    cuoc_payment_method_id, cuoc_thu_ngay,
+    chi_ho_payment_method_id, chi_ho_thu_ngay, charges = [],
   } = req.body;
 
   const ngayCtHieuLuc = ngay_ct || ngay_to_khai || null;
@@ -272,12 +311,14 @@ router.put('/:id', (req, res) => {
   const trx = db.transaction(() => {
     db.prepare(
       `UPDATE shipments SET ngay_ct=?, customer_id=?, invoice=?, so_to_khai=?, ngay_to_khai=?,
-       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, po=?, cuoc_payment_method_id=?, cuoc_thu_ngay=?, updated_at=datetime('now')
+       so_container=?, so_luong_cont=?, cuoc_dv=?, ghi_chu=?, status=?, po=?, cuoc_payment_method_id=?, cuoc_thu_ngay=?,
+       chi_ho_payment_method_id=?, chi_ho_thu_ngay=?, updated_at=datetime('now')
        WHERE id=?`
     ).run(
       ngayCtHieuLuc, customer_id, invoice || null, so_to_khai || null, ngay_to_khai || null,
       so_container || null, so_luong_cont || null, cuoc_dv || 0, ghi_chu || null,
-      status || 'hoan_thanh', po || null, cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0, req.params.id
+      status || 'hoan_thanh', po || null, cuoc_payment_method_id || null, cuoc_thu_ngay ? 1 : 0,
+      chi_ho_payment_method_id || null, chi_ho_thu_ngay ? 1 : 0, req.params.id
     );
 
     // KHÔNG đụng tới shipment_customer_charges ở đây — theo đúng nguyên tắc "copy 1 lần lúc tạo,
@@ -295,13 +336,17 @@ router.put('/:id', (req, res) => {
       );
     }
 
-    // v2: xoá/tạo lại phiếu tự sinh theo dữ liệu vừa lưu (xem ghi chú ở regenerateAutoVouchers).
+    // v3: xoá/tạo lại phiếu tự sinh theo dữ liệu vừa lưu (xem ghi chú ở regenerateAutoVouchers).
+    // shipment_customer_charges KHÔNG bị đụng ở route PUT này (độc lập với Cost) nên số tiền mỗi
+    // phiếu thu lấy đúng phần Dịch vụ / Chi hộ hiện có của lô hàng — Single Source of Truth.
     const ma_lo = db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(req.params.id)?.ma_lo;
     const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
+    const { dichVu, chiHo } = sumCustomerChargesByType(req.params.id);
     regenerateAutoVouchers(req.params.id, {
-      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo,
-      ngayCt: ngayCtHieuLuc, cuocDv: cuoc_dv || 0, cuocPaymentMethodId: cuoc_payment_method_id,
-      cuocThuNgay: !!cuoc_thu_ngay, charges,
+      soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo, ngayCt: ngayCtHieuLuc,
+      dichVuAmount: dichVu, cuocPaymentMethodId: cuoc_payment_method_id, cuocThuNgay: !!cuoc_thu_ngay,
+      chiHoAmount: chiHo, chiHoPaymentMethodId: chi_ho_payment_method_id, chiHoThuNgay: !!chi_ho_thu_ngay,
+      charges,
     });
   });
   trx();
@@ -338,14 +383,14 @@ router.put('/:id/customer-charges', (req, res) => {
   const trx = db.transaction(() => {
     db.prepare(`DELETE FROM shipment_customer_charges WHERE shipment_id = ?`).run(shipmentId);
     const insert = db.prepare(
-      `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, ghi_chu)
-       VALUES (?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, charge_type, ghi_chu)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
     );
     lines.forEach((l, idx) => {
       insert.run(
         shipmentId, idx + 1, l.source_charge_id || null, l.mo_ta || '', l.don_vi_tinh || null,
         l.so_luong ?? 1, l.don_gia ?? 0, l.vat_percent === '' || l.vat_percent === undefined ? null : l.vat_percent,
-        l.ghi_chu || null
+        normalizeChargeType(l.charge_type), l.ghi_chu || null
       );
     });
   });

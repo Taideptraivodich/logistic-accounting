@@ -1,9 +1,13 @@
 const express = require('express');
 const db = require('../db');
+const { revenueExpr, disbursementExpr } = require('../utils/revenue');
 const router = express.Router();
 
 // ================= CÔNG NỢ KHÁCH HÀNG =================
-// Phải thu = cước dịch vụ (doanh thu) + các khoản CHI HỘ (sc.la_chi_ho = 1) của lô hàng KH đó.
+// Phải thu = SUM(Customer Charges) của toàn bộ lô hàng thuộc khách hàng đó — Single Source of Truth
+// doanh thu (xem utils/revenue.js), KHÔNG còn đọc shipments.cuoc_dv. "Cước dịch vụ" (cuoc_dv) và
+// "Chi hộ" (chi_ho) bên dưới là 2 breakdown của cùng SUM này theo Charge Type (charge_type khác
+// DISBURSEMENT vs = DISBURSEMENT) — cộng lại đúng bằng Phải thu, không phải 2 nguồn số riêng biệt.
 // Đã thu = tổng phiếu thu. Còn nợ = Phải thu - Đã thu.
 router.get('/cong-no-kh', (req, res) => {
   const { q } = req.query;
@@ -13,27 +17,27 @@ router.get('/cong-no-kh', (req, res) => {
     customers = customers.filter((c) => c.name.toLowerCase().includes(like));
   }
   const result = customers.map((c) => {
-    const cuoc_dv =
-      db.prepare(`SELECT COALESCE(SUM(cuoc_dv),0) as t FROM shipments WHERE customer_id = ?`).get(c.id).t || 0;
+    const phai_thu =
+      db
+        .prepare(`SELECT COALESCE(SUM(${revenueExpr('s.id')}),0) as t FROM shipments s WHERE s.customer_id = ?`)
+        .get(c.id).t || 0;
     const chi_ho =
       db
-        .prepare(
-          `SELECT COALESCE(SUM(sc.so_tien),0) as t
-           FROM shipment_charges sc JOIN shipments s ON s.id = sc.shipment_id
-           WHERE s.customer_id = ? AND sc.la_chi_ho = 1`
-        )
+        .prepare(`SELECT COALESCE(SUM(${disbursementExpr('s.id')}),0) as t FROM shipments s WHERE s.customer_id = ?`)
         .get(c.id).t || 0;
+    const cuoc_dv = phai_thu - chi_ho;
+    // Breakdown "Chi hộ" theo mô tả (mo_ta) trong Customer Charges — thay cho loai_phi của
+    // shipment_charges cũ, đúng nguyên tắc "mọi báo cáo đọc từ Customer Charges".
     const chi_ho_theo_loai = db
       .prepare(
-        `SELECT COALESCE(sc.loai_phi, '(Khác)') as loai_phi, SUM(sc.so_tien) as so_tien
-         FROM shipment_charges sc JOIN shipments s ON s.id = sc.shipment_id
-         WHERE s.customer_id = ? AND sc.la_chi_ho = 1
-         GROUP BY COALESCE(sc.loai_phi, '(Khác)')`
+        `SELECT COALESCE(NULLIF(scc.mo_ta, ''), '(Khác)') as loai_phi, SUM(scc.don_gia * scc.so_luong) as so_tien
+         FROM shipment_customer_charges scc JOIN shipments s ON s.id = scc.shipment_id
+         WHERE s.customer_id = ? AND scc.charge_type = 'DISBURSEMENT'
+         GROUP BY COALESCE(NULLIF(scc.mo_ta, ''), '(Khác)')`
       )
       .all(c.id);
     const da_thu =
       db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts WHERE customer_id = ?`).get(c.id).t || 0;
-    const phai_thu = cuoc_dv + chi_ho;
     return {
       id: c.id,
       name: c.name,
@@ -54,7 +58,7 @@ router.get('/cong-no-kh/:customer_id/chi-tiet', (req, res) => {
   const shipments = db
     .prepare(
       `SELECT s.id, s.ma_lo, s.ngay_ct, s.invoice,
-        (s.cuoc_dv + COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0)) as phai_thu,
+        ${revenueExpr('s.id')} as phai_thu,
         'lo_hang' as loai
        FROM shipments s WHERE s.customer_id = ?`
     )
@@ -88,8 +92,9 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
   // theo tháng chỉ vì thiếu ngày chứng từ.
   const shipmentRows = db
     .prepare(
-      `SELECT COALESCE(NULLIF(s.ngay_ct, ''), NULLIF(s.ngay_to_khai, '')) as ngay_hieu_luc, s.cuoc_dv,
-        COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as chi_ho
+      `SELECT COALESCE(NULLIF(s.ngay_ct, ''), NULLIF(s.ngay_to_khai, '')) as ngay_hieu_luc,
+        ${revenueExpr('s.id')} as revenue_total,
+        ${disbursementExpr('s.id')} as chi_ho
        FROM shipments s
        WHERE s.customer_id = ?
        ORDER BY ngay_hieu_luc`
@@ -98,19 +103,20 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
 
   const monthMap = new Map();
   for (const s of shipmentRows) {
+    const cuoc = (s.revenue_total || 0) - (s.chi_ho || 0);
     const key = (s.ngay_hieu_luc || '').slice(0, 7); // YYYY-MM
     if (key.length !== 7) {
       // Không có cả ngày chứng từ lẫn ngày tờ khai -> gom vào nhóm "Chưa xác định ngày"
       const k = '__no_date__';
       if (!monthMap.has(k)) monthMap.set(k, { cuoc: 0, chi_ho: 0 });
       const m = monthMap.get(k);
-      m.cuoc += s.cuoc_dv || 0;
+      m.cuoc += cuoc;
       m.chi_ho += s.chi_ho || 0;
       continue;
     }
     if (!monthMap.has(key)) monthMap.set(key, { cuoc: 0, chi_ho: 0 });
     const m = monthMap.get(key);
-    m.cuoc += s.cuoc_dv || 0;
+    m.cuoc += cuoc;
     m.chi_ho += s.chi_ho || 0;
   }
   const months = [...monthMap.entries()]
@@ -400,17 +406,17 @@ router.get('/so-quy/:pm_id/chi-tiet', (req, res) => {
 });
 
 // ================= DOANH THU (theo lô hàng) =================
-// Doanh thu = cước dịch vụ (cuoc_dv) + các khoản CHI HỘ (phải thu lại từ khách).
-// Chi phí = toàn bộ shipment_charges (kể cả phần chi hộ, vì tiền đã thực chi ra cho NCC/HQ).
-// Lợi nhuận = Doanh thu - Chi phí (phần chi hộ tự triệt tiêu nếu thu đúng bằng số đã chi hộ).
+// Doanh thu = SUM(Customer Charges) — Single Source of Truth (xem utils/revenue.js). KHÔNG còn đọc
+// shipments.cuoc_dv. Chi phí = toàn bộ shipment_charges (Supplier Costs — SSOT riêng cho khoản chi,
+// không đổi). Lợi nhuận = Doanh thu - Chi phí.
 router.get('/doanh-thu', (req, res) => {
   const { from, to, q } = req.query;
   let sql = `
     SELECT s.id, s.ma_lo, s.ngay_ct, c.name as customer_name, s.invoice,
       s.so_to_khai, s.ngay_to_khai, s.so_container, s.so_luong_cont,
-      s.cuoc_dv,
       COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id), 0) as chi_phi,
-      COALESCE((SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = s.id AND la_chi_ho = 1), 0) as chi_ho
+      ${revenueExpr('s.id')} as doanh_thu,
+      ${disbursementExpr('s.id')} as chi_ho
     FROM shipments s
     LEFT JOIN customers c ON c.id = s.customer_id
     WHERE 1=1`;
@@ -431,34 +437,37 @@ router.get('/doanh-thu', (req, res) => {
   sql += ' ORDER BY s.ngay_ct, s.id';
   const rows = db.prepare(sql).all(...params);
 
-  // Lấy breakdown chi phí theo TỪNG loại phí cho mỗi lô hàng (giống bố cục file Excel gốc:
-  // mỗi loại phí 1 cột riêng, ví dụ Chi hải quan / Phí nâng / Phí hạ / Thuế / Lệ phí ...).
+  // Breakdown DOANH THU theo TỪNG khoản trong Customer Charges (giống bố cục file Excel gốc: mỗi
+  // khoản 1 cột riêng) — thay cho breakdown CHI PHÍ theo loai_phi của shipment_charges cũ, đúng
+  // nguyên tắc "mọi báo cáo doanh thu đọc từ Customer Charges, không đọc từ Shipment.service_fee".
   const shipmentIds = rows.map((r) => r.id);
-  const byTypeMap = new Map(); // shipment_id -> { loai_phi: so_tien }
+  const byTypeMap = new Map(); // shipment_id -> { mo_ta: so_tien }
   const feeTypeSet = new Set();
   if (shipmentIds.length) {
     const placeholders = shipmentIds.map(() => '?').join(',');
     const chargeRows = db
       .prepare(
-        `SELECT shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)') as loai_phi, SUM(so_tien) as so_tien
-         FROM shipment_charges WHERE shipment_id IN (${placeholders})
-         GROUP BY shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)')`
+        `SELECT shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)') as mo_ta, SUM(don_gia * so_luong) as so_tien
+         FROM shipment_customer_charges WHERE shipment_id IN (${placeholders})
+         GROUP BY shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)')`
       )
       .all(...shipmentIds);
     for (const c of chargeRows) {
-      feeTypeSet.add(c.loai_phi);
+      feeTypeSet.add(c.mo_ta);
       if (!byTypeMap.has(c.shipment_id)) byTypeMap.set(c.shipment_id, {});
-      byTypeMap.get(c.shipment_id)[c.loai_phi] = c.so_tien || 0;
+      byTypeMap.get(c.shipment_id)[c.mo_ta] = c.so_tien || 0;
     }
   }
-  // Sắp xếp cột loại phí theo đúng thứ tự trong danh mục "Loại phí" (nếu có), phần còn lại xếp sau.
+  // Sắp xếp cột theo đúng thứ tự trong danh mục "Loại phí" (nếu tên trùng khớp), phần còn lại xếp sau.
   const feeTypeOrder = db.prepare(`SELECT name FROM fee_types ORDER BY name`).all().map((f) => f.name);
   const fee_types = [...feeTypeOrder.filter((f) => feeTypeSet.has(f)), ...[...feeTypeSet].filter((f) => !feeTypeOrder.includes(f))];
 
-  const result = rows.map((r) => {
-    const doanh_thu = (r.cuoc_dv || 0) + (r.chi_ho || 0);
-    return { ...r, by_type: byTypeMap.get(r.id) || {}, doanh_thu, loi_nhuan: doanh_thu - r.chi_phi };
-  });
+  const result = rows.map((r) => ({
+    ...r,
+    cuoc_dv: (r.doanh_thu || 0) - (r.chi_ho || 0),
+    by_type: byTypeMap.get(r.id) || {},
+    loi_nhuan: r.doanh_thu - r.chi_phi,
+  }));
   const tong = result.reduce(
     (acc, r) => ({
       doanh_thu: acc.doanh_thu + r.doanh_thu,
@@ -473,10 +482,10 @@ router.get('/doanh-thu', (req, res) => {
 // ================= DASHBOARD TỔNG QUAN =================
 router.get('/dashboard', (req, res) => {
   const soLoHang = db.prepare(`SELECT COUNT(*) as c FROM shipments`).get().c;
-  const cuocDvTotal = db.prepare(`SELECT COALESCE(SUM(cuoc_dv),0) as t FROM shipments`).get().t || 0;
-  const chiHoTotal =
-    db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM shipment_charges WHERE la_chi_ho = 1`).get().t || 0;
-  const doanhThu = cuocDvTotal + chiHoTotal;
+  // Doanh thu = SUM(Customer Charges) toàn hệ thống — Single Source of Truth (xem utils/revenue.js).
+  // KHÔNG còn cộng shipments.cuoc_dv + shipment_charges.la_chi_ho như trước.
+  const doanhThu =
+    db.prepare(`SELECT COALESCE(SUM(${revenueExpr('s.id')}),0) as t FROM shipments s`).get().t || 0;
   const chiPhi = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM shipment_charges`).get().t || 0;
   const daThuKH = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts`).get().t || 0;
   const daTraNCC = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments`).get().t || 0;

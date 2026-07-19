@@ -38,7 +38,7 @@ export default function Shipments() {
     { title: 'Số container', dataIndex: 'so_container', width: 140 },
     {
       title: 'Cước DV (Doanh thu)',
-      dataIndex: 'cuoc_dv',
+      dataIndex: 'doanh_thu',
       width: 150,
       align: 'right',
       render: (v) => <span className="money money-pos">{formatMoney(v)}</span>,

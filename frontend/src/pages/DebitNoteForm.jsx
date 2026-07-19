@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Form, Input, InputNumber, Select, DatePicker, Radio, Button,
@@ -110,7 +110,10 @@ export default function DebitNoteForm() {
     try {
       const { data: shipment } = await api.get(`/shipments/${shipmentId}`);
       if (shipment.customer_id) form.setFieldValue('customer_id', shipment.customer_id);
-      const { data } = await api.get(`/shipments/${shipmentId}/customer-charges`);
+      const loai = form.getFieldValue('loai');
+      // Lọc theo Charge Type: "Phí dịch vụ" chỉ lấy dòng SERVICE, "Phí chi hộ" chỉ lấy dòng
+      // DISBURSEMENT (mục 6 yêu cầu sau UAT — không kéo lẫn 2 loại vào 1 Debit Note nữa).
+      const { data } = await api.get('/debit-notes/suggest-lines', { params: { shipment_id: shipmentId, loai } });
       const newLines = (data.lines || []).map((l) => ({
         key: nextTempId(),
         mo_ta: l.mo_ta,
@@ -123,7 +126,7 @@ export default function DebitNoteForm() {
         source_charge_id: l.source_charge_id,
       }));
       setLines(newLines);
-      if (!silent) message.success(`Đã lấy ${newLines.length} dòng từ Customer Charges của lô hàng`);
+      if (!silent) message.success(`Đã lấy ${newLines.length} dòng từ Customer Charges của lô hàng (đúng loại "${loai === 'chi_ho' ? 'Chi hộ' : 'Dịch vụ'}")`);
     } catch (e) {
       if (!silent) message.error('Không lấy được Customer Charges của lô hàng này');
     } finally {
@@ -151,6 +154,22 @@ export default function DebitNoteForm() {
   const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
 
   const loaiWatch = Form.useWatch('loai', form);
+
+  // HOTFIX (xem AI_HANDOVER.md mục 1): trước đây đổi Radio "Loại" KHÔNG re-fetch/xoá `lines`, nên
+  // nếu Senior bấm "Lấy dòng" lúc đang ở "Phí dịch vụ" rồi mới đổi sang "Phí chi hộ", bảng vẫn giữ
+  // nguyên các dòng cũ (sai loại) — lưu lại thì Debit Note chứa nhầm dòng của loại kia.
+  // Chọn phương án "an toàn": khi Loại đổi (không phải lần set giá trị ban đầu lúc mount/load dữ
+  // liệu), xoá sạch `lines` + nhắc Senior chủ động bấm lại "Lấy dòng" — không tự động gọi API ngầm
+  // để tránh gây khó hiểu.
+  const prevLoaiRef = useRef(undefined);
+  useEffect(() => {
+    if (loaiWatch === undefined) return;
+    if (prevLoaiRef.current !== undefined && prevLoaiRef.current !== loaiWatch) {
+      setLines([]);
+      message.info('Đã đổi "Loại" — các dòng cũ (thuộc loại trước) đã được xoá để tránh lấy nhầm. Bấm "Lấy dòng từ Customer Charges của lô hàng này" để lấy lại đúng loại mới.');
+    }
+    prevLoaiRef.current = loaiWatch;
+  }, [loaiWatch]);
 
   const totals = useMemo(
     () =>

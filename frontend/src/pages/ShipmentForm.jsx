@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Form, Input, InputNumber, Select, DatePicker, Checkbox, Button,
-  Table, Space, message, Typography, AutoComplete, Popconfirm, Tabs,
+  Table, Space, message, Typography, AutoComplete, Popconfirm, Tabs, Tooltip,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined, FilePdfOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined, SaveOutlined, FilePdfOutlined, SwapOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
@@ -33,12 +33,25 @@ const VAT_OPTIONS = [
   { value: 10, label: '10%' },
 ];
 
+// Charge Type để phục vụ báo cáo doanh thu / lọc Debit Note theo loại (mục 5 yêu cầu sau UAT).
+// KHÔNG còn hiển thị dưới dạng dropdown cho Senior tự chọn nữa (xem redesign "2 vùng" ở
+// AI_HANDOVER.md) — vùng nào thì dòng đó tự mang đúng charge_type của vùng đó (Cước dịch vụ ->
+// SERVICE, Chi hộ -> DISBURSEMENT). ADJUSTMENT/DISCOUNT (nếu có từ dữ liệu cũ) được gộp hiển thị
+// chung với vùng "Cước dịch vụ" (đơn giản nhất, theo đúng đề xuất "Việc CHƯA quyết" trong handover
+// — Senior chưa yêu cầu tách riêng 2 loại đó ra 1 vùng thứ 3).
+
 function CustomerChargesTab({ shipmentId, navigate }) {
   const [lines, setLines] = useState([]);
   const [totals, setTotals] = useState({ subtotal: 0, vat: 0, grand_total: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+
+  // Danh mục "Cước dịch vụ thường dùng" (mục 3a AI_HANDOVER.md) — dùng cho Select ở vùng "Cước
+  // dịch vụ", tương tự cách "Loại phí"/"Nhà cung cấp" đã có ở tab Chi phí.
+  const [serviceCatalog, setServiceCatalog] = useState([]);
+  const [newCatalogName, setNewCatalogName] = useState('');
+  const [addingCatalog, setAddingCatalog] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -53,6 +66,7 @@ function CustomerChargesTab({ shipmentId, navigate }) {
             so_luong: l.so_luong,
             don_gia: l.don_gia,
             vat_percent: l.vat_percent,
+            charge_type: l.charge_type || 'SERVICE',
             ghi_chu: l.ghi_chu,
             source_charge_id: l.source_charge_id,
           }))
@@ -65,17 +79,76 @@ function CustomerChargesTab({ shipmentId, navigate }) {
 
   useEffect(load, [shipmentId]);
 
-  const updateLine = (key, field, value) => {
-    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, [field]: value } : l)));
+  useEffect(() => {
+    api
+      .get('/service-charges')
+      .then(({ data }) => setServiceCatalog(data))
+      .catch(() => {});
+  }, []);
+
+  // patch nhiều field cùng lúc (vd chọn danh mục -> tự điền cả Mô tả + ĐVT + Đơn giá 1 lần) —
+  // updateLine bên dưới chỉ là tiện ích gọi lại hàm này với 1 field.
+  const updateLineFields = (key, patch) => {
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   };
-  const addLine = () => {
-    setLines((prev) => [...prev, { key: nextTempId(), mo_ta: '', don_vi_tinh: '', so_luong: 1, don_gia: 0, vat_percent: null, ghi_chu: '' }]);
+  const updateLine = (key, field, value) => updateLineFields(key, { [field]: value });
+
+  const addServiceLine = () => {
+    setLines((prev) => [
+      ...prev,
+      { key: nextTempId(), mo_ta: '', don_vi_tinh: '', so_luong: 1, don_gia: 0, vat_percent: null, charge_type: 'SERVICE', ghi_chu: '' },
+    ]);
+    setDirty(true);
+  };
+  const addDisbursementLine = () => {
+    setLines((prev) => [
+      ...prev,
+      { key: nextTempId(), mo_ta: '', don_vi_tinh: '', so_luong: 1, don_gia: 0, vat_percent: null, charge_type: 'DISBURSEMENT', ghi_chu: '' },
+    ]);
     setDirty(true);
   };
   const removeLine = (key) => {
     setLines((prev) => prev.filter((l) => l.key !== key));
     setDirty(true);
+  };
+
+  // Nút "chuyển vùng" cho 1 dòng — thay thế dropdown Charge Type công khai trước đây. Dùng cho
+  // trường hợp Senior lỡ thêm nhầm vùng, hoặc dữ liệu cũ (trước khi có redesign 2 vùng) đang để
+  // sai Charge Type (ví dụ dòng thực chất là Chi hộ nhưng đang mang charge_type SERVICE từ trước).
+  const toggleRegion = (key, currentType) => {
+    updateLine(key, 'charge_type', currentType === 'DISBURSEMENT' ? 'SERVICE' : 'DISBURSEMENT');
+  };
+
+  // Chọn dòng có sẵn trong danh mục "Cước dịch vụ" -> tự điền Mô tả (+ ĐVT/Đơn giá mặc định nếu
+  // dòng đang trống, không ghi đè giá Senior đã tự nhập). Gõ giá trị mới chưa có trong danh mục
+  // (Select showSearch cho phép gõ tự do) thì chỉ set Mô tả, Senior có thể bấm "+ Thêm vào danh
+  // mục" ở dropdown để lưu lại dùng cho lần sau.
+  const onPickCatalog = (key, val, row) => {
+    const item = serviceCatalog.find((c) => c.name === val);
+    const patch = { mo_ta: val };
+    if (item) {
+      if (!row.don_vi_tinh && item.don_vi_tinh) patch.don_vi_tinh = item.don_vi_tinh;
+      if (!row.don_gia && item.don_gia_mac_dinh != null) patch.don_gia = item.don_gia_mac_dinh;
+    }
+    updateLineFields(key, patch);
+  };
+
+  const quickAddCatalog = async (rowKey) => {
+    const name = newCatalogName.trim();
+    if (!name) return;
+    setAddingCatalog(true);
+    try {
+      const { data } = await api.post('/service-charges', { name });
+      setServiceCatalog((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+      updateLine(rowKey, 'mo_ta', data.name);
+      setNewCatalogName('');
+      message.success(`Đã thêm "${name}" vào danh mục Cước dịch vụ`);
+    } catch (e) {
+      message.error(e?.response?.data?.error || 'Không thêm được vào danh mục (có thể tên đã tồn tại)');
+    } finally {
+      setAddingCatalog(false);
+    }
   };
 
   const localTotals = useMemo(() => {
@@ -99,6 +172,7 @@ function CustomerChargesTab({ shipmentId, navigate }) {
           so_luong: l.so_luong,
           don_gia: l.don_gia,
           vat_percent: l.vat_percent,
+          charge_type: l.charge_type,
           ghi_chu: l.ghi_chu,
           source_charge_id: l.source_charge_id,
         })),
@@ -112,12 +186,14 @@ function CustomerChargesTab({ shipmentId, navigate }) {
     }
   };
 
-  const columns = [
-    {
-      title: 'Description',
-      dataIndex: 'mo_ta',
-      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'mo_ta', e.target.value)} placeholder="Mô tả" />,
-    },
+  // ---- 2 vùng tách riêng (xem AI_HANDOVER.md mục 2, 3b): state `lines` vẫn là 1 mảng DUY NHẤT,
+  // chỉ tách UI hiển thị + nút "Thêm dòng" thành 2 bảng con lọc theo charge_type. Payload gửi
+  // xuống PUT /shipments/:id/customer-charges KHÔNG đổi (vẫn `lines: [...]` phẳng như cũ). Dòng
+  // ADJUSTMENT/DISCOUNT (dữ liệu cũ, nếu có) gộp hiển thị cùng vùng "Cước dịch vụ".
+  const serviceLines = lines.filter((l) => l.charge_type !== 'DISBURSEMENT');
+  const disbursementLines = lines.filter((l) => l.charge_type === 'DISBURSEMENT');
+
+  const commonColumns = (kind) => [
     {
       title: 'Unit',
       dataIndex: 'don_vi_tinh',
@@ -160,11 +236,70 @@ function CustomerChargesTab({ shipmentId, navigate }) {
     },
     {
       title: '',
-      width: 50,
+      width: 70,
       render: (_, r) => (
-        <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeLine(r.key)} />
+        <Space size={4}>
+          <Tooltip title={kind === 'service' ? 'Chuyển dòng này sang vùng Chi hộ' : 'Chuyển dòng này sang vùng Cước dịch vụ'}>
+            <Button size="small" icon={<SwapOutlined />} onClick={() => toggleRegion(r.key, r.charge_type)} />
+          </Tooltip>
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeLine(r.key)} />
+        </Space>
       ),
     },
+  ];
+
+  const serviceColumns = [
+    {
+      title: 'Description',
+      dataIndex: 'mo_ta',
+      render: (v, r) => {
+        // Luôn đảm bảo giá trị hiện tại của dòng hiển thị đúng trong Select, kể cả khi nó chưa
+        // (hoặc không còn) nằm trong danh mục (vd dữ liệu cũ nhập tay trước khi có danh mục này).
+        const options = serviceCatalog.some((c) => c.name === v)
+          ? serviceCatalog.map((c) => ({ value: c.name, label: c.name }))
+          : [...(v ? [{ value: v, label: v }] : []), ...serviceCatalog.map((c) => ({ value: c.name, label: c.name }))];
+        return (
+          <Select
+            value={v || undefined}
+            style={{ width: '100%' }}
+            showSearch
+            allowClear
+            placeholder="Chọn Cước dịch vụ"
+            options={options}
+            onChange={(val) => onPickCatalog(r.key, val, r)}
+            filterOption={(input, option) => option.label.toLowerCase().includes(input.toLowerCase())}
+            dropdownRender={(menu) => (
+              <div>
+                {menu}
+                <div style={{ display: 'flex', gap: 4, padding: 8, borderTop: '1px solid #f0f0f0' }}>
+                  <Input
+                    size="small"
+                    placeholder="Thêm mới vào danh mục..."
+                    value={newCatalogName}
+                    onChange={(e) => setNewCatalogName(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    onPressEnter={() => quickAddCatalog(r.key)}
+                  />
+                  <Button size="small" type="primary" loading={addingCatalog} onClick={() => quickAddCatalog(r.key)}>
+                    Thêm
+                  </Button>
+                </div>
+              </div>
+            )}
+          />
+        );
+      },
+    },
+    ...commonColumns('service'),
+  ];
+
+  const disbursementColumns = [
+    {
+      title: 'Description',
+      dataIndex: 'mo_ta',
+      render: (v, r) => <Input value={v} onChange={(e) => updateLine(r.key, 'mo_ta', e.target.value)} placeholder="Mô tả" />,
+    },
+    ...commonColumns('disbursement'),
   ];
 
   return (
@@ -172,12 +307,24 @@ function CustomerChargesTab({ shipmentId, navigate }) {
       <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
         Đây là khoản SẼ THU KHÁCH — độc lập hoàn toàn với Cost bên tab "Chi phí" (giá bán không
         nhất thiết bằng chi phí thực tế). Lần đầu mở tab này, dữ liệu được copy từ Cost sang; sau
-        đó sửa ở đây không ảnh hưởng Cost, và ngược lại.
+        đó sửa ở đây không ảnh hưởng Cost, và ngược lại. <b>Đây là nguồn dữ liệu DUY NHẤT cho doanh
+        thu của lô hàng</b> — không còn ô "Cước dịch vụ (Doanh thu)" nhập tay ở phần Thông tin
+        chung nữa. 2 vùng dưới đây tự mang đúng loại của mình (Cước dịch vụ / Chi hộ) — không cần
+        tự chọn Charge Type nữa; dùng nút <SwapOutlined /> ở cuối dòng nếu lỡ thêm nhầm vùng.
       </Typography.Text>
-      <Table rowKey="key" dataSource={lines} columns={columns} loading={loading} pagination={false} size="small" />
-      <Button icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={addLine}>
-        Thêm dòng
+
+      <Typography.Title level={5} style={{ marginTop: 8 }}>Cước dịch vụ</Typography.Title>
+      <Table rowKey="key" dataSource={serviceLines} columns={serviceColumns} loading={loading} pagination={false} size="small" />
+      <Button icon={<PlusOutlined />} style={{ marginTop: 8, marginBottom: 24 }} onClick={addServiceLine}>
+        Thêm dòng Cước dịch vụ
       </Button>
+
+      <Typography.Title level={5}>Chi hộ</Typography.Title>
+      <Table rowKey="key" dataSource={disbursementLines} columns={disbursementColumns} loading={loading} pagination={false} size="small" />
+      <Button icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={addDisbursementLine}>
+        Thêm dòng Chi hộ
+      </Button>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 32, marginTop: 16, flexWrap: 'wrap' }}>
         <span>Subtotal: <b>{formatMoney(localTotals.subtotal)}</b></span>
         <span>VAT: <b>{formatMoney(localTotals.vat)}</b></span>
@@ -214,6 +361,12 @@ export default function ShipmentForm() {
   const [linkedReceipts, setLinkedReceipts] = useState([]);
   const [linkedPayments, setLinkedPayments] = useState([]);
   const [customerName, setCustomerName] = useState(null);
+  // Doanh thu thật của lô hàng, TÁCH theo Charge Type (Dịch vụ / Chi hộ — xem
+  // utils/revenue.js#sumCustomerChargesByType ở backend), lấy từ GET /shipments/:id khi Sửa —
+  // vì tab "Debit Note (thu khách)" độc lập với Cost sau lần copy đầu, số này có thể khác tổng chi
+  // phí bên dưới. 2 khoản này thu ĐỘC LẬP (thường về 2 tài khoản khác nhau — xem 2 mẫu Debit Note).
+  const [savedDoanhThuDichVu, setSavedDoanhThuDichVu] = useState(0);
+  const [savedDoanhThuChiHo, setSavedDoanhThuChiHo] = useState(0);
 
   // ---- Tải danh mục ----
   useEffect(() => {
@@ -251,9 +404,10 @@ export default function ShipmentForm() {
           ngay_to_khai: data.ngay_to_khai ? dayjs(data.ngay_to_khai) : null,
           so_container: data.so_container,
           so_luong_cont: data.so_luong_cont,
-          cuoc_dv: data.cuoc_dv,
           cuoc_payment_method_id: data.cuoc_payment_method_id,
           cuoc_thu_ngay: !!data.cuoc_thu_ngay,
+          chi_ho_payment_method_id: data.chi_ho_payment_method_id,
+          chi_ho_thu_ngay: !!data.chi_ho_thu_ngay,
           ghi_chu: data.ghi_chu,
         });
         setCharges(
@@ -271,6 +425,8 @@ export default function ShipmentForm() {
         );
         setMaLo(data.ma_lo);
         setCustomerName(data.customer_name);
+        setSavedDoanhThuDichVu(data.doanh_thu_dich_vu || 0);
+        setSavedDoanhThuChiHo(data.doanh_thu_chi_ho || 0);
         setLinkedReceipts(data.linked_receipts || []);
         setLinkedPayments(data.linked_payments || []);
       })
@@ -322,14 +478,22 @@ export default function ShipmentForm() {
     }
   };
 
-  // ---- Tính tổng trực tiếp (đồng bộ công thức mới: doanh thu = cước dv + chi hộ) ----
-  const cuocDv = Form.useWatch('cuoc_dv', form) || 0;
+  // ---- Tính tổng trực tiếp ----
+  // Doanh thu KHÔNG còn nhập tay (cuoc_dv) — Customer Charges là Single Source of Truth (xem
+  // utils/revenue.js ở backend). "Cước dịch vụ" và "Chi hộ" là 2 khoản thu ĐỘC LẬP (thường về 2 tài
+  // khoản khác nhau — xem 2 mẫu Debit Note PDF gốc, mỗi mẫu ghi 1 "Người thụ hưởng" riêng), nên tách
+  // riêng ước tính cho từng bên. Khi Sửa lô hàng đã tồn tại: dùng đúng số đã lưu (savedDoanhThu*,
+  // vì tab "Debit Note (thu khách)" độc lập với Cost sau lần copy đầu, có thể đã bị Senior sửa khác
+  // đi). Khi Tạo mới: lô hàng chưa có Customer Charges thật, nên ước tính theo hành vi copy 1:1 lúc
+  // Lưu lần đầu (xem copyChargesToCustomerCharges — la_chi_ho=1 -> DISBURSEMENT/"Chi hộ").
   const tongChiPhi = useMemo(() => charges.reduce((a, c) => a + (Number(c.so_tien) || 0), 0), [charges]);
   const tongChiHo = useMemo(
     () => charges.reduce((a, c) => a + (c.la_chi_ho ? Number(c.so_tien) || 0 : 0), 0),
     [charges]
   );
-  const doanhThuDuKien = cuocDv + tongChiHo;
+  const doanhThuDichVuDuKien = isEdit ? savedDoanhThuDichVu : tongChiPhi - tongChiHo;
+  const doanhThuChiHoDuKien = isEdit ? savedDoanhThuChiHo : tongChiHo;
+  const doanhThuDuKien = doanhThuDichVuDuKien + doanhThuChiHoDuKien;
   const loiNhuanDuKien = doanhThuDuKien - tongChiPhi;
 
   const columns = [
@@ -546,12 +710,6 @@ export default function ShipmentForm() {
                 optionFilterProp="label"
                 placeholder="Chọn khách hàng"
                 options={customers.map((c) => ({ value: c.id, label: c.name }))}
-                onChange={(val) => {
-                  const cust = customers.find((c) => c.id === val);
-                  if (cust && !form.getFieldValue('cuoc_dv')) {
-                    form.setFieldValue('cuoc_dv', cust.default_cuoc_dv);
-                  }
-                }}
               />
             </Form.Item>
             <Form.Item label="Invoice" name="invoice">
@@ -572,13 +730,10 @@ export default function ShipmentForm() {
             <Form.Item label="Số lượng cont" name="so_luong_cont">
               <Input />
             </Form.Item>
-            <Form.Item label="Cước dịch vụ (Doanh thu)" name="cuoc_dv">
-              <InputNumber {...moneyProps} />
-            </Form.Item>
             <Form.Item
-              label="Quỹ thu cước"
+              label={`Quỹ thu Cước dịch vụ${doanhThuDichVuDuKien ? ` (${formatMoney(doanhThuDichVuDuKien)})` : ''}`}
               name="cuoc_payment_method_id"
-              tooltip="Quỹ nhận tiền cước. Tick 'Đã thu?' bên cạnh rồi Lưu để tự tạo phiếu thu thật vào quỹ này."
+              tooltip="Quỹ nhận tiền CƯỚC DỊCH VỤ (các dòng Charge Type ≠ Chi hộ ở tab Debit Note). Tick 'Đã thu?' bên cạnh rồi Lưu để tự tạo phiếu thu thật vào quỹ này."
             >
               <Select
                 allowClear
@@ -587,13 +742,33 @@ export default function ShipmentForm() {
               />
             </Form.Item>
             <Form.Item
-              label="Đã thu?"
+              label="Đã thu cước dịch vụ?"
               name="cuoc_thu_ngay"
               valuePropName="checked"
               initialValue={false}
-              tooltip="Tick khi đã thu tiền cước thật — Lưu sẽ tự tạo phiếu thu (nội dung tự sinh theo mẫu 'Thu cước ...'). Bỏ tick rồi Lưu sẽ tự xoá phiếu thu tương ứng."
+              tooltip="Tick khi đã thu tiền CƯỚC DỊCH VỤ thật — Lưu sẽ tự tạo phiếu thu riêng (nội dung tự sinh 'Thu cước dịch vụ ...'). Bỏ tick rồi Lưu sẽ tự xoá phiếu thu tương ứng."
             >
-              <Checkbox>Đã thu tiền cước</Checkbox>
+              <Checkbox>Đã thu cước dịch vụ</Checkbox>
+            </Form.Item>
+            <Form.Item
+              label={`Quỹ thu Chi hộ${doanhThuChiHoDuKien ? ` (${formatMoney(doanhThuChiHoDuKien)})` : ''}`}
+              name="chi_ho_payment_method_id"
+              tooltip="Quỹ nhận tiền CHI HỘ (các dòng Charge Type = Chi hộ ở tab Debit Note) — thường KHÁC quỹ cước dịch vụ, ví dụ về tài khoản riêng trả trước tiền cảng/lệ phí HQ."
+            >
+              <Select
+                allowClear
+                placeholder="Chọn quỹ"
+                options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))}
+              />
+            </Form.Item>
+            <Form.Item
+              label="Đã thu chi hộ?"
+              name="chi_ho_thu_ngay"
+              valuePropName="checked"
+              initialValue={false}
+              tooltip="Tick khi đã thu lại tiền CHI HỘ thật — Lưu sẽ tự tạo phiếu thu riêng (nội dung tự sinh 'Thu chi hộ ...'), độc lập với phiếu thu cước dịch vụ."
+            >
+              <Checkbox>Đã thu chi hộ</Checkbox>
             </Form.Item>
             <Form.Item label="Ghi chú" name="ghi_chu" style={{ gridColumn: 'span 2' }}>
               <Input />

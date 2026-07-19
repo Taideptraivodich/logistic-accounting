@@ -167,6 +167,20 @@ export default function Catalog() {
       children: <GenericCatalog endpoint="fee-types" title="Loại phí" extraFields={[]} />,
     },
     {
+      key: 'service-charges',
+      label: 'Cước dịch vụ',
+      children: (
+        <GenericCatalog
+          endpoint="service-charges"
+          title="Cước dịch vụ"
+          extraFields={[
+            { name: 'don_vi_tinh', label: 'Đơn vị tính', type: 'text' },
+            { name: 'don_gia_mac_dinh', label: 'Đơn giá mặc định', type: 'number' },
+          ]}
+        />
+      ),
+    },
+    {
       key: 'payment-methods',
       label: 'Hình thức thanh toán / Quỹ',
       children: (

@@ -87,7 +87,8 @@ function VoucherTable({
   }, [autoOpenNew]);
 
   // Chọn "Lô hàng liên kết" trong modal -> tự gen Nội dung + Số tiền (tổng), theo quy cách:
-  // Thu: "TK {số tờ khai} - Thu cước {tên khách hàng} - {mã lô}", số tiền = cước DV + chi hộ.
+  // Thu: "TK {số tờ khai} - Thu cước {tên khách hàng} - {mã lô}", số tiền = s.doanh_thu (SUM
+  // Customer Charges — Single Source of Truth doanh thu, xem backend utils/revenue.js).
   // Chi: "TK {số tờ khai} - Chi {các loại phí} - {mã lô}", số tiền = tổng chi phí (đã gồm chi hộ).
   // Lấy chi tiết đầy đủ (charges) qua GET /shipments/:id thay vì chỉ dùng danh sách rút gọn,
   // để liệt kê đúng các "loại phí" thật của lô hàng cho phần chi.
@@ -97,7 +98,7 @@ function VoucherTable({
       const { data: s } = await api.get(`/shipments/${shipmentId}`);
       const tkPart = s.so_to_khai ? `TK ${s.so_to_khai} - ` : '';
       if (isThu) {
-        const soTien = (s.cuoc_dv || 0) + (s.tong_chi_ho || 0);
+        const soTien = s.doanh_thu || 0;
         const ghiChu = `${tkPart}Thu cước ${s.customer_name || ''} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
         setTargetType('owner');
         form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu, [ownerField]: s.customer_id });

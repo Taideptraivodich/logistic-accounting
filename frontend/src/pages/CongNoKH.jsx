@@ -65,13 +65,15 @@ export default function CongNoKH() {
     }
   };
 
-  // Chọn "Lô hàng liên kết" -> tự gen Nội dung + Số tiền (cước DV + chi hộ), giống màn Phiếu thu/chi.
+  // Chọn "Lô hàng liên kết" -> tự gen Nội dung + Số tiền, giống màn Phiếu thu/chi. Số tiền lấy
+  // đúng s.doanh_thu (SUM Customer Charges — Single Source of Truth, xem backend utils/revenue.js),
+  // không còn tự cộng cuoc_dv + tong_chi_ho ở frontend nữa.
   const onShipmentPick = async (shipmentId) => {
     if (!shipmentId) return;
     try {
       const { data: s } = await api.get(`/shipments/${shipmentId}`);
       const tkPart = s.so_to_khai ? `TK ${s.so_to_khai} - ` : '';
-      const soTien = (s.cuoc_dv || 0) + (s.tong_chi_ho || 0);
+      const soTien = s.doanh_thu || 0;
       const ghiChu = `${tkPart}Thu cước ${s.customer_name || ''} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
       form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu });
     } catch {

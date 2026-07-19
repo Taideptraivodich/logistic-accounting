@@ -59,6 +59,15 @@ router.post('/fee-types', feeTypeCrud.create);
 router.put('/fee-types/:id', feeTypeCrud.update);
 router.delete('/fee-types/:id', feeTypeCrud.remove);
 
+// ================= DANH MỤC "CƯỚC DỊCH VỤ THƯỜNG DÙNG" (mục 3a AI_HANDOVER.md) =================
+// Dùng ở vùng "Cước dịch vụ" của tab Debit Note (thu khách) trong ShipmentForm.jsx, để Senior chọn
+// nhanh (kiểu "Mã hàng" MISA) hoặc gõ thêm dòng mới ngay tại chỗ (quick-add) thay vì gõ tay mỗi lần.
+const serviceChargeCrud = makeCrud('service_charge_catalog', ['don_vi_tinh', 'don_gia_mac_dinh']);
+router.get('/service-charges', serviceChargeCrud.list);
+router.post('/service-charges', serviceChargeCrud.create);
+router.put('/service-charges/:id', serviceChargeCrud.update);
+router.delete('/service-charges/:id', serviceChargeCrud.remove);
+
 const pmCrud = makeCrud('payment_methods', [
   'opening_balance', 'bank_account_name', 'bank_account_number', 'bank_name', 'bank_swift',
 ]);

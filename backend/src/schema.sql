@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   opening_balance REAL DEFAULT 0
 );
 
+-- Danh mục "Cước dịch vụ thường dùng" (giống cách tạo/chọn "Mã hàng" trong MISA) — dùng ở vùng
+-- "Cước dịch vụ" của tab Debit Note (thu khách), để Senior chọn nhanh thay vì gõ tay Mô tả mỗi
+-- lần (xem AI_HANDOVER.md mục 3a). Không có cột charge_type: mọi dòng chọn từ danh mục này khi
+-- thêm vào vùng "Cước dịch vụ" đều mặc định charge_type = 'SERVICE' ở tầng ứng dụng.
+CREATE TABLE IF NOT EXISTS service_charge_catalog (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  don_vi_tinh TEXT,
+  don_gia_mac_dinh REAL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- ================= LÔ HÀNG (PHIẾU CHÍNH) =================
 -- Mỗi lô hàng = 1 "phiếu" giống MISA: chọn khách hàng, nhập cước thu (doanh thu),
 -- các khoản chi phí đi kèm được ghi trong bảng shipment_charges.
@@ -38,9 +50,24 @@ CREATE TABLE IF NOT EXISTS shipments (
   ngay_to_khai TEXT,
   so_container TEXT,
   so_luong_cont TEXT,
-  cuoc_dv REAL DEFAULT 0,              -- cước thu của khách hàng (doanh thu)
-  cuoc_payment_method_id INTEGER REFERENCES payment_methods(id), -- quỹ nào nhận cước (nếu thu ngay)
-  cuoc_thu_ngay INTEGER DEFAULT 0,     -- 1 nếu ghi nhận thu ngay khi lưu phiếu
+  cuoc_dv REAL DEFAULT 0,              -- [DEPRECATED sau UAT] KHÔNG còn dùng để tính doanh thu ở bất
+                                        -- kỳ đâu — giữ lại cột chỉ để tương thích dữ liệu cũ (không
+                                        -- xoá cột, không đọc/ghi từ Shipment Form nữa). Doanh thu thật
+                                        -- giờ tính động từ SUM(shipment_customer_charges), xem
+                                        -- utils/revenue.js. Lý do: cước dịch vụ thực tế gồm NHIỀU
+                                        -- khoản (phí khai HQ, C/O, chứng từ, vận chuyển, handling,
+                                        -- AMS/AFR/ENS...), tất cả đã nhập ở Customer Charges — nhập
+                                        -- tay thêm 1 lần nữa ở đây là dữ liệu trùng lặp, dễ lệch nếu
+                                        -- sửa Customer Charges mà quên sửa cuoc_dv.
+  -- v3 (sau phản hồi: "cước dịch vụ" và "chi hộ" là 2 khoản thu ĐỘC LẬP, thường về 2 tài khoản/
+  -- quỹ khác nhau — xem 2 mẫu Debit Note PDF gốc: mỗi mẫu ghi 1 "Người thụ hưởng" riêng). Tách
+  -- "Đã thu?" + "Quỹ thu" thành 2 cặp: 1 cho phần Dịch vụ (charge_type != DISBURSEMENT), 1 cho
+  -- phần Chi hộ (charge_type = DISBURSEMENT). Số tiền mỗi bên tính động qua
+  -- utils/revenue.js#sumCustomerChargesByType — KHÔNG lưu số tiền ở đây.
+  cuoc_payment_method_id INTEGER REFERENCES payment_methods(id), -- quỹ nhận CƯỚC DỊCH VỤ (nếu thu ngay)
+  cuoc_thu_ngay INTEGER DEFAULT 0,     -- 1 nếu ghi nhận thu CƯỚC DỊCH VỤ ngay khi lưu phiếu
+  chi_ho_payment_method_id INTEGER REFERENCES payment_methods(id), -- quỹ nhận CHI HỘ (nếu thu ngay)
+  chi_ho_thu_ngay INTEGER DEFAULT 0,   -- 1 nếu ghi nhận thu CHI HỘ ngay khi lưu phiếu
   ghi_chu TEXT,
   status TEXT DEFAULT 'hoan_thanh',    -- nhap | hoan_thanh
   created_at TEXT DEFAULT (datetime('now')),
@@ -82,6 +109,13 @@ CREATE TABLE IF NOT EXISTS shipment_customer_charges (
   so_luong REAL NOT NULL DEFAULT 1,   -- Qty
   don_gia REAL NOT NULL DEFAULT 0,    -- Unit Price — độc lập hoàn toàn với shipment_charges.so_tien
   vat_percent REAL,                   -- NULL = chưa xác định thuế suất; 0/8/10 = % VAT
+  -- Charge Type để phục vụ báo cáo (doanh thu, công nợ, lọc Debit Note theo loại):
+  --   SERVICE      phí dịch vụ (khai HQ, C/O, chứng từ, vận chuyển, handling, AMS/AFR/ENS...)
+  --   DISBURSEMENT phí chi hộ (nâng/hạ cont, lệ phí HQ, lệ phí CO... trả trước rồi thu lại khách)
+  --   ADJUSTMENT   điều chỉnh tay (Manual Adjustment)
+  --   DISCOUNT     chiết khấu
+  charge_type TEXT NOT NULL DEFAULT 'SERVICE'
+    CHECK(charge_type IN ('SERVICE','DISBURSEMENT','ADJUSTMENT','DISCOUNT')),
   ghi_chu TEXT                        -- Remark
 );
 
