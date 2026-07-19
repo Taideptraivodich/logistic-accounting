@@ -240,11 +240,27 @@ CREATE TABLE IF NOT EXISTS debit_notes (
   so_container TEXT,
   po TEXT,
 
-  -- Bank Information (tự do, không ràng buộc khoá ngoại — mỗi Debit Note có thể thu về 1 TK khác nhau)
+  -- Bank Information [DEPRECATED — xem 8 cột dv_*/chi_ho_* bên dưới]. Trước đây 1 Debit Note chỉ có
+  -- ĐÚNG 1 bộ thông tin nhận tiền dùng chung cho cả 2 vùng (Cước dịch vụ + Chi hộ). Theo yêu cầu
+  -- mới: đôi khi 2 khoản này thu về CÙNG 1 tài khoản, đôi khi lại 2 tài khoản KHÁC nhau -> tách
+  -- riêng bộ thông tin nhận tiền cho từng vùng. Giữ lại 4 cột này chỉ để tương thích dữ liệu cũ
+  -- (không đọc/ghi từ Frontend nữa) — xem migration backfill ở backend/src/db.js.
   bank_account_name TEXT,
   bank_account_number TEXT,
   bank_name TEXT,
   bank_swift TEXT,
+
+  -- Thông tin nhận tiền riêng cho vùng "Cước dịch vụ" (SERVICE)
+  dv_bank_account_name TEXT,
+  dv_bank_account_number TEXT,
+  dv_bank_name TEXT,
+  dv_bank_swift TEXT,
+
+  -- Thông tin nhận tiền riêng cho vùng "Chi hộ" (DISBURSEMENT) — có thể giống hoặc khác bộ trên
+  chi_ho_bank_account_name TEXT,
+  chi_ho_bank_account_number TEXT,
+  chi_ho_bank_name TEXT,
+  chi_ho_bank_swift TEXT,
 
   -- Signature
   nguoi_ky TEXT,

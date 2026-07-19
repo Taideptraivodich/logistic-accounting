@@ -184,14 +184,30 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
   const serviceColumns = buildLineColumns(false, updateLine, removeLine);
   const disbursementColumns = buildLineColumns(true, updateLine, removeLine);
 
-  const onPickPaymentMethod = (pmId) => {
+  // Thông tin nhận tiền giờ TÁCH riêng theo vùng (Cước dịch vụ / Chi hộ, xem ghi chú ở schema.sql)
+  // vì thực tế đôi khi 2 khoản này thu về CÙNG 1 tài khoản, đôi khi lại KHÁC nhau. `region` là
+  // 'dv' (Cước dịch vụ) hoặc 'chi_ho' (Chi hộ) — quyết định set vào field nào (dv_bank_* hay
+  // chi_ho_bank_*).
+  const onPickPaymentMethod = (region) => (pmId) => {
     const pm = paymentMethods.find((p) => p.id === pmId);
     if (!pm) return;
+    const prefix = region === 'chi_ho' ? 'chi_ho_bank_' : 'dv_bank_';
     form.setFieldsValue({
-      bank_account_name: pm.bank_account_name || form.getFieldValue('bank_account_name'),
-      bank_account_number: pm.bank_account_number || form.getFieldValue('bank_account_number'),
-      bank_name: pm.bank_name || form.getFieldValue('bank_name'),
-      bank_swift: pm.bank_swift || form.getFieldValue('bank_swift'),
+      [`${prefix}account_name`]: pm.bank_account_name || form.getFieldValue(`${prefix}account_name`),
+      [`${prefix}account_number`]: pm.bank_account_number || form.getFieldValue(`${prefix}account_number`),
+      [`${prefix}name`]: pm.bank_name || form.getFieldValue(`${prefix}name`),
+      [`${prefix}swift`]: pm.bank_swift || form.getFieldValue(`${prefix}swift`),
+    });
+  };
+
+  // Tiện ích cho trường hợp Cước dịch vụ + Chi hộ thu về CÙNG 1 tài khoản — copy nguyên bộ Cước
+  // dịch vụ sang Chi hộ, Senior không cần gõ/chọn lại từ đầu.
+  const copyServiceBankToDisbursement = () => {
+    form.setFieldsValue({
+      chi_ho_bank_account_name: form.getFieldValue('dv_bank_account_name'),
+      chi_ho_bank_account_number: form.getFieldValue('dv_bank_account_number'),
+      chi_ho_bank_name: form.getFieldValue('dv_bank_name'),
+      chi_ho_bank_swift: form.getFieldValue('dv_bank_swift'),
     });
   };
 
@@ -213,33 +229,76 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
         </Row>
       </Card>
 
-      <Card title="Thông tin nhận tiền / chữ ký" style={{ marginBottom: 16 }}>
+      <Card title="Thông tin nhận tiền — Cước dịch vụ" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col span={6}>
             <Form.Item label="Chọn quỹ để tự điền TK ngân hàng">
-              <Select allowClear placeholder="Chọn quỹ" options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))} onChange={onPickPaymentMethod} />
+              <Select allowClear placeholder="Chọn quỹ" options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))} onChange={onPickPaymentMethod('dv')} />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item label="Số tài khoản" name="bank_account_number">
+            <Form.Item label="Số tài khoản" name="dv_bank_account_number">
               <Input />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item label="Ngân hàng" name="bank_name">
+            <Form.Item label="Ngân hàng" name="dv_bank_name">
               <Input />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item label="SWIFT Code" name="bank_swift">
+            <Form.Item label="SWIFT Code" name="dv_bank_swift">
               <Input />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item label="Người thụ hưởng" name="bank_account_name">
+            <Form.Item label="Người thụ hưởng" name="dv_bank_account_name">
               <Input />
             </Form.Item>
           </Col>
+        </Row>
+      </Card>
+
+      <Card
+        title="Thông tin nhận tiền — Chi hộ"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button size="small" onClick={copyServiceBankToDisbursement}>
+            Giống Cước dịch vụ
+          </Button>
+        }
+      >
+        <Row gutter={16}>
+          <Col span={6}>
+            <Form.Item label="Chọn quỹ để tự điền TK ngân hàng">
+              <Select allowClear placeholder="Chọn quỹ" options={paymentMethods.map((p) => ({ value: p.id, label: p.name }))} onChange={onPickPaymentMethod('chi_ho')} />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item label="Số tài khoản" name="chi_ho_bank_account_number">
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item label="Ngân hàng" name="chi_ho_bank_name">
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item label="SWIFT Code" name="chi_ho_bank_swift">
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item label="Người thụ hưởng" name="chi_ho_bank_account_name">
+              <Input />
+            </Form.Item>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card title="Chữ ký" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
           <Col span={6}>
             <Form.Item label="Người ký" name="nguoi_ky">
               <Input />
@@ -250,7 +309,7 @@ function DebitNoteBody({ form, lines, setLines, paymentMethods, customers, total
               <Input placeholder="Trưởng phòng kinh doanh" />
             </Form.Item>
           </Col>
-          <Col span={6}>
+          <Col span={12}>
             <Form.Item label="Ghi chú chung" name="ghi_chu">
               <Input />
             </Form.Item>
@@ -315,10 +374,14 @@ function ShipmentDebitNotePanel({ shipmentId, customers, paymentMethods, navigat
         form.setFieldsValue({
           ngay_ct: data.draft.ngay_ct ? dayjs(data.draft.ngay_ct) : null,
           customer_id: data.draft.customer_id,
-          bank_account_name: data.draft.bank_account_name,
-          bank_account_number: data.draft.bank_account_number,
-          bank_name: data.draft.bank_name,
-          bank_swift: data.draft.bank_swift,
+          dv_bank_account_name: data.draft.dv_bank_account_name,
+          dv_bank_account_number: data.draft.dv_bank_account_number,
+          dv_bank_name: data.draft.dv_bank_name,
+          dv_bank_swift: data.draft.dv_bank_swift,
+          chi_ho_bank_account_name: data.draft.chi_ho_bank_account_name,
+          chi_ho_bank_account_number: data.draft.chi_ho_bank_account_number,
+          chi_ho_bank_name: data.draft.chi_ho_bank_name,
+          chi_ho_bank_swift: data.draft.chi_ho_bank_swift,
           nguoi_ky: data.draft.nguoi_ky,
           chuc_danh_nguoi_ky: data.draft.chuc_danh_nguoi_ky,
           ghi_chu: data.draft.ghi_chu,
@@ -497,10 +560,14 @@ export default function DebitNoteForm() {
         form.setFieldsValue({
           ngay_ct: data.ngay_ct ? dayjs(data.ngay_ct) : null,
           customer_id: data.customer_id,
-          bank_account_name: data.bank_account_name,
-          bank_account_number: data.bank_account_number,
-          bank_name: data.bank_name,
-          bank_swift: data.bank_swift,
+          dv_bank_account_name: data.dv_bank_account_name,
+          dv_bank_account_number: data.dv_bank_account_number,
+          dv_bank_name: data.dv_bank_name,
+          dv_bank_swift: data.dv_bank_swift,
+          chi_ho_bank_account_name: data.chi_ho_bank_account_name,
+          chi_ho_bank_account_number: data.chi_ho_bank_account_number,
+          chi_ho_bank_name: data.chi_ho_bank_name,
+          chi_ho_bank_swift: data.chi_ho_bank_swift,
           nguoi_ky: data.nguoi_ky,
           chuc_danh_nguoi_ky: data.chuc_danh_nguoi_ky,
           ghi_chu: data.ghi_chu,

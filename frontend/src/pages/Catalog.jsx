@@ -106,7 +106,15 @@ function GenericCatalog({ endpoint, title, extraFields, listQuery, fixedFields }
           prefix={<SearchOutlined />}
         />
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={filteredRows} loading={loading} pagination={{ pageSize: 15 }} size="small" />
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={filteredRows}
+        loading={loading}
+        pagination={{ pageSize: 15 }}
+        size="small"
+        scroll={{ x: 'max-content' }}
+      />
 
       <Modal
         title={editing ? `Sửa ${title.toLowerCase()}` : `Thêm ${title.toLowerCase()}`}
@@ -204,7 +212,16 @@ export default function Catalog() {
         <GenericCatalog
           endpoint="payment-methods"
           title="Hình thức thanh toán"
-          extraFields={[{ name: 'opening_balance', label: 'Số dư đầu kỳ', type: 'number' }]}
+          extraFields={[
+            { name: 'opening_balance', label: 'Số dư đầu kỳ', type: 'number' },
+            // 4 trường dưới đây dùng để tự điền "Thông tin nhận tiền" ở màn Debit Note (Cước dịch vụ
+            // / Chi hộ, xem DebitNoteForm.jsx) khi Senior chọn quỹ tương ứng — đỡ phải gõ tay lại
+            // mỗi lần lập Debit Note cho cùng 1 quỹ.
+            { name: 'bank_account_number', label: 'Số tài khoản', type: 'text' },
+            { name: 'bank_name', label: 'Ngân hàng', type: 'text' },
+            { name: 'bank_swift', label: 'SWIFT Code', type: 'text' },
+            { name: 'bank_account_name', label: 'Người thụ hưởng', type: 'text' },
+          ]}
         />
       ),
     },

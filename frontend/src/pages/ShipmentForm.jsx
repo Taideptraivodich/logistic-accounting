@@ -355,7 +355,20 @@ export default function ShipmentForm() {
   const [suppliers, setSuppliers] = useState([]);
   const [feeTypes, setFeeTypes] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
-  const [charges, setCharges] = useState([]);
+  // Màn "Tạo lô hàng" (chưa có isEdit): thêm sẵn 2 dòng trống ở tab "Chi phí" để Senior nhập ngay,
+  // không cần tự bấm "Thêm dòng chi phí" trước — chỉ áp dụng lúc TẠO MỚI (isEdit=false), lô hàng
+  // Sửa vẫn tải đúng dữ liệu đã lưu qua applyLoadedShipment như trước.
+  const makeEmptyCharge = () => ({
+    key: nextTempId(),
+    loai_phi: null,
+    supplier_id: null,
+    payment_method_id: null,
+    so_tien: 0,
+    da_thanh_toan: false,
+    la_chi_ho: false,
+    ghi_chu: '',
+  });
+  const [charges, setCharges] = useState(() => (isEdit ? [] : [makeEmptyCharge(), makeEmptyCharge()]));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [newSupplierName, setNewSupplierName] = useState('');
@@ -449,19 +462,7 @@ export default function ShipmentForm() {
   }, [id]);
 
   const addCharge = () => {
-    setCharges((prev) => [
-      ...prev,
-      {
-        key: nextTempId(),
-        loai_phi: null,
-        supplier_id: null,
-        payment_method_id: null,
-        so_tien: 0,
-        da_thanh_toan: false,
-        la_chi_ho: false,
-        ghi_chu: '',
-      },
-    ]);
+    setCharges((prev) => [...prev, makeEmptyCharge()]);
   };
 
   const updateCharge = (key, patch) => {
@@ -808,13 +809,13 @@ export default function ShipmentForm() {
                 label: 'Chi phí (phải trả nhà cung cấp)',
                 children: (
                   <>
-                    <Space style={{ width: '100%', justifyContent: 'flex-end', marginBottom: 12 }}>
+                    <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 12 }}>
                       <Button icon={<PlusOutlined />} onClick={addCharge}>
                         Thêm dòng chi phí
                       </Button>
-                    </Space>
-
-                    <Table rowKey="key" dataSource={charges} columns={columns} pagination={false} size="small" />
+                    </div>
 
                     <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
                       Lưu ý: Lưu lô hàng sẽ tự tạo (hoặc cập nhật lại) phiếu thu/phiếu chi thật cho những

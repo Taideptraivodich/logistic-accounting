@@ -87,7 +87,7 @@ function fmtDate(d) {
 // giống hệt 2 mẫu PDF gốc trước khi gộp (xem AI_HANDOVER.md). `pageLabel` chỉ hiển thị khi có cả 2
 // trang, để phân biệt "Trang 1/2" / "Trang 2/2" (không ảnh hưởng tới việc chỉ có đúng 1 số Debit
 // Note cho cả 2 trang — bản chất vẫn là 1 Debit Note, chỉ in tách trang).
-function DnPage({ dn, sectionTitle, lines, withInvoiceCol, docTitle, pageLabel, breakBefore }) {
+function DnPage({ dn, sectionTitle, lines, withInvoiceCol, docTitle, pageLabel, breakBefore, bank }) {
   const totals = sumLines(lines);
   return (
     <div
@@ -131,10 +131,10 @@ function DnPage({ dn, sectionTitle, lines, withInvoiceCol, docTitle, pageLabel, 
       <div style={{ marginTop: 14, fontSize: 13, lineHeight: 1.7 }}>
         Kính đề nghị Quý Công ty Thanh Toán qua TK sau:
         <br />
-        {dn.bank_account_number && <>Số Tài khoản VND: {dn.bank_account_number}<br /></>}
-        {dn.bank_name && <>Ngân hàng: {dn.bank_name}<br /></>}
-        {dn.bank_swift && <>SWIFT Code: {dn.bank_swift}<br /></>}
-        {dn.bank_account_name && <>Người Thụ Hưởng: {dn.bank_account_name}<br /></>}
+        {bank.account_number && <>Số Tài khoản VND: {bank.account_number}<br /></>}
+        {bank.bank_name && <>Ngân hàng: {bank.bank_name}<br /></>}
+        {bank.swift && <>SWIFT Code: {bank.swift}<br /></>}
+        {bank.account_name && <>Người Thụ Hưởng: {bank.account_name}<br /></>}
       </div>
 
       <div style={{ marginTop: 10, fontSize: 13 }}>Xin trân trọng cám ơn!</div>
@@ -228,6 +228,12 @@ export default function DebitNotePrint() {
           docTitle="DEBIT NOTE"
           pageLabel={isCombined ? 'Trang 1/2' : null}
           breakBefore={false}
+          bank={{
+            account_number: dn.dv_bank_account_number,
+            bank_name: dn.dv_bank_name,
+            swift: dn.dv_bank_swift,
+            account_name: dn.dv_bank_account_name,
+          }}
         />
       )}
       {isCombined && <div className="dn-page-gap" />}
@@ -240,6 +246,12 @@ export default function DebitNotePrint() {
           docTitle={isCombined ? 'DEBIT NOTE' : 'DEBIT NOTE CHI HỘ'}
           pageLabel={isCombined ? 'Trang 2/2' : null}
           breakBefore={isCombined}
+          bank={{
+            account_number: dn.chi_ho_bank_account_number,
+            bank_name: dn.chi_ho_bank_name,
+            swift: dn.chi_ho_bank_swift,
+            account_name: dn.chi_ho_bank_account_name,
+          }}
         />
       )}
     </div>

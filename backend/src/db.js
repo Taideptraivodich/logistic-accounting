@@ -127,6 +127,35 @@ db.exec(
 // từ danh mục này ở tab Debit Note (thu khách) — DB cũ chưa có cột, mặc định NULL ("No VAT").
 ensureColumn('service_charge_catalog', 'vat_percent_mac_dinh', 'vat_percent_mac_dinh REAL');
 
+// Đợt "tách Thông tin nhận tiền theo vùng": trước đây debit_notes chỉ có 1 bộ bank_* dùng chung
+// cho cả "Cước dịch vụ" và "Chi hộ". Giờ tách riêng 2 bộ (dv_bank_*/chi_ho_bank_*) vì thực tế đôi
+// khi 2 khoản này thu về CÙNG 1 tài khoản, đôi khi lại KHÁC — Senior cần tự chọn/sửa riêng từng
+// bên. DB cũ chưa có 8 cột mới -> ALTER thêm, rồi BACKFILL 1 lần từ bộ bank_* cũ (giữ đúng hành vi
+// trước đây "1 tài khoản dùng chung") vào CẢ HAI bộ mới cho các Debit Note đã tồn tại — Senior có
+// thể sửa lại riêng từng bên sau nếu cần tách ra 2 tài khoản khác nhau. Chỉ backfill khi cột mới
+// đang NULL (an toàn để chạy lại nhiều lần, không đè lên dữ liệu đã tách riêng).
+ensureColumn('debit_notes', 'dv_bank_account_name', 'dv_bank_account_name TEXT');
+ensureColumn('debit_notes', 'dv_bank_account_number', 'dv_bank_account_number TEXT');
+ensureColumn('debit_notes', 'dv_bank_name', 'dv_bank_name TEXT');
+ensureColumn('debit_notes', 'dv_bank_swift', 'dv_bank_swift TEXT');
+ensureColumn('debit_notes', 'chi_ho_bank_account_name', 'chi_ho_bank_account_name TEXT');
+ensureColumn('debit_notes', 'chi_ho_bank_account_number', 'chi_ho_bank_account_number TEXT');
+ensureColumn('debit_notes', 'chi_ho_bank_name', 'chi_ho_bank_name TEXT');
+ensureColumn('debit_notes', 'chi_ho_bank_swift', 'chi_ho_bank_swift TEXT');
+db.exec(`
+  UPDATE debit_notes SET
+    dv_bank_account_name = COALESCE(dv_bank_account_name, bank_account_name),
+    dv_bank_account_number = COALESCE(dv_bank_account_number, bank_account_number),
+    dv_bank_name = COALESCE(dv_bank_name, bank_name),
+    dv_bank_swift = COALESCE(dv_bank_swift, bank_swift),
+    chi_ho_bank_account_name = COALESCE(chi_ho_bank_account_name, bank_account_name),
+    chi_ho_bank_account_number = COALESCE(chi_ho_bank_account_number, bank_account_number),
+    chi_ho_bank_name = COALESCE(chi_ho_bank_name, bank_name),
+    chi_ho_bank_swift = COALESCE(chi_ho_bank_swift, bank_swift)
+  WHERE bank_account_name IS NOT NULL OR bank_account_number IS NOT NULL
+     OR bank_name IS NOT NULL OR bank_swift IS NOT NULL
+`);
+
 // Danh mục "Cước dịch vụ thường dùng" (mục 3a AI_HANDOVER.md) — tự thêm cho DB đã có sẵn của
 // Senior mỗi lần server khởi động (INSERT OR IGNORE theo UNIQUE(name), không tạo trùng), giống
 // cách seed defaultVoucherCatsChi ở trên.

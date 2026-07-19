@@ -425,6 +425,73 @@ router.put('/:id/customer-charges', (req, res) => {
   res.json(withCustomerChargeTotals(rows));
 });
 
+// ================= SAO CHÉP LÔ HÀNG =================
+// Tạo 1 lô hàng MỚI (mã lô mới tự sinh) với toàn bộ thông tin sao chép từ lô hàng nguồn: các
+// trường Thông tin chung, toàn bộ dòng "Chi phí" (tab Cost) và toàn bộ dòng "Debit Note (thu
+// khách)" hiện có (tab Customer Charges — copy trực tiếp, KHÔNG suy luận lại từ Cost, vì 2 bên có
+// thể đã bị Senior sửa khác đi sau lần copy đầu). Reset các cờ "Đã thu?"/"Đã thanh toán?" về false
+// và Trạng thái về "nhap" (nháp) cho lô hàng mới — vì đây là 1 phiếu MỚI, chưa thực sự có phát sinh
+// thu/chi tiền, tránh vô tình tự sinh phiếu thu/chi trùng với lô hàng gốc. Ngày chứng từ mặc định
+// = hôm nay (Senior có thể tự sửa lại ngay ở màn Sửa lô hàng vừa tạo).
+router.post('/:id/duplicate', (req, res) => {
+  const source = getShipmentFull(req.params.id);
+  if (!source) return res.status(404).json({ error: 'Không tìm thấy lô hàng để sao chép' });
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const trx = db.transaction(() => {
+    const ma_lo = nextCode('LO', 'shipments', 'ma_lo');
+    const info = db
+      .prepare(
+        `INSERT INTO shipments
+         (ma_lo, ngay_ct, customer_id, invoice, so_to_khai, ngay_to_khai, so_container, so_luong_cont, cuoc_dv, ghi_chu, status, po, cuoc_payment_method_id, cuoc_thu_ngay, chi_ho_payment_method_id, chi_ho_thu_ngay)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        ma_lo, todayStr, source.customer_id, source.invoice || null, source.so_to_khai || null,
+        source.ngay_to_khai || null, source.so_container || null, source.so_luong_cont || null,
+        0, source.ghi_chu || null, 'nhap', source.po || null,
+        source.cuoc_payment_method_id || null, 0,
+        source.chi_ho_payment_method_id || null, 0
+      );
+    const shipmentId = info.lastInsertRowid;
+
+    const insCharge = db.prepare(
+      `INSERT INTO shipment_charges (shipment_id, ngay_ct, loai_phi, supplier_id, payment_method_id, so_tien, da_thanh_toan, la_chi_ho, ghi_chu)
+       VALUES (?,?,?,?,?,?,0,?,?)`
+    );
+    for (const c of source.charges) {
+      insCharge.run(
+        shipmentId, todayStr, c.loai_phi || null, c.supplier_id || null,
+        c.payment_method_id || null, c.so_tien || 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
+      );
+    }
+
+    // Copy trực tiếp các dòng "Debit Note (thu khách)" hiện có của lô hàng nguồn (nếu đã từng mở
+    // tab đó / đã tự lazy-copy) — KHÔNG copy lại từ Cost để giữ đúng số tiền Senior đã sửa riêng ở
+    // đó. Nếu lô hàng nguồn CHƯA có dòng nào ở đây (chưa từng mở tab Debit Note), bỏ qua — lô hàng
+    // mới sẽ tự lazy-copy từ Cost của chính nó khi Senior mở tab đó lần đầu, giống hành vi bình
+    // thường của 1 lô hàng mới có Cost.
+    const sourceCustomerCharges = db
+      .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
+      .all(req.params.id);
+    if (sourceCustomerCharges.length > 0) {
+      const insCc = db.prepare(
+        `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, charge_type, ghi_chu)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+      );
+      sourceCustomerCharges.forEach((l) => {
+        insCc.run(shipmentId, l.stt, null, l.mo_ta, l.don_vi_tinh, l.so_luong, l.don_gia, l.vat_percent, l.charge_type, l.ghi_chu);
+      });
+    }
+
+    return shipmentId;
+  });
+
+  const newId = trx();
+  res.json(getShipmentFull(newId));
+});
+
 // ---- DELETE ----
 router.delete('/:id', (req, res) => {
   db.prepare(`DELETE FROM shipments WHERE id = ?`).run(req.params.id);

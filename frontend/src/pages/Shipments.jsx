@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Input, Space, Tag, Popconfirm, message } from 'antd';
-import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { formatMoney, moneyClass } from '../utils/format';
@@ -9,6 +9,7 @@ export default function Shipments() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
+  const [duplicating, setDuplicating] = useState(null);
   const navigate = useNavigate();
 
   const load = (query) => {
@@ -27,6 +28,24 @@ export default function Shipments() {
     await api.delete(`/shipments/${id}`);
     message.success('Đã xoá lô hàng');
     load(q);
+  };
+
+  // Sao chép 1 lô hàng thành lô hàng MỚI (mã lô mới) với toàn bộ thông tin có sẵn — Chi phí và
+  // Debit Note (nếu có) đều được copy sang, chỉ reset lại các cờ "Đã thu?"/"Đã thanh toán?" và
+  // Trạng thái về "Nháp" (xem ghi chú ở backend/src/routes/shipments.js). Sau khi tạo xong, chuyển
+  // luôn sang màn Sửa của lô hàng mới để Senior chỉnh lại các trường cần thay đổi (Invoice, tờ
+  // khai, container...).
+  const handleDuplicate = async (id) => {
+    setDuplicating(id);
+    try {
+      const { data } = await api.post(`/shipments/${id}/duplicate`);
+      message.success(`Đã sao chép thành lô hàng mới: ${data.ma_lo}`);
+      navigate(`/shipments/${data.id}`);
+    } catch (e) {
+      message.error(e?.response?.data?.error || 'Không sao chép được lô hàng này');
+    } finally {
+      setDuplicating(null);
+    }
   };
 
   const columns = [
@@ -71,7 +90,7 @@ export default function Shipments() {
     {
       title: '',
       key: 'actions',
-      width: 90,
+      width: 130,
       fixed: 'right',
       render: (_, r) => (
         <Space>
@@ -80,6 +99,13 @@ export default function Shipments() {
             icon={<EditOutlined />}
             onClick={() => navigate(`/shipments/${r.id}`)}
           />
+          <Popconfirm
+            title="Sao chép lô hàng này?"
+            description="Tạo lô hàng mới với toàn bộ thông tin, chi phí và Debit Note (nếu có) của lô hàng này."
+            onConfirm={() => handleDuplicate(r.id)}
+          >
+            <Button size="small" icon={<CopyOutlined />} loading={duplicating === r.id} />
+          </Popconfirm>
           <Popconfirm title="Xoá lô hàng này?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
