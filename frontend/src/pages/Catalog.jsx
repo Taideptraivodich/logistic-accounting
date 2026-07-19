@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Tabs, Table, Button, Modal, Form, Input, InputNumber, Space, Popconfirm, message } from 'antd';
+import { Tabs, Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, message } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
@@ -71,7 +71,11 @@ function GenericCatalog({ endpoint, title, extraFields, listQuery, fixedFields }
       title: f.label,
       dataIndex: f.name,
       align: f.type === 'number' ? 'right' : undefined,
-      render: f.type === 'number' ? (v) => formatMoney(v) : undefined,
+      render: f.type === 'number'
+        ? (v) => formatMoney(v)
+        : f.type === 'select'
+        ? (v) => (f.options.find((o) => o.value === v) || {}).label ?? ''
+        : undefined,
     })),
     {
       title: '',
@@ -123,6 +127,8 @@ function GenericCatalog({ endpoint, title, extraFields, listQuery, fixedFields }
                   formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
                   parser={(v) => v.replace(/,/g, '')}
                 />
+              ) : f.type === 'select' ? (
+                <Select style={{ width: '100%' }} options={f.options} allowClear />
               ) : (
                 <Input />
               )}
@@ -176,6 +182,17 @@ export default function Catalog() {
           extraFields={[
             { name: 'don_vi_tinh', label: 'Đơn vị tính', type: 'text' },
             { name: 'don_gia_mac_dinh', label: 'Đơn giá mặc định', type: 'number' },
+            {
+              name: 'vat_percent_mac_dinh',
+              label: 'VAT mặc định',
+              type: 'select',
+              options: [
+                { value: null, label: 'No VAT' },
+                { value: 0, label: '0%' },
+                { value: 8, label: '8%' },
+                { value: 10, label: '10%' },
+              ],
+            },
           ]}
         />
       ),

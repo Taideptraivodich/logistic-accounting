@@ -3,15 +3,22 @@ const db = require('../db');
 const { nextCode } = require('../utils/nextCode');
 const router = express.Router();
 
-// Loại Debit Note -> Charge Type tương ứng cần lọc khi lấy dòng gợi ý từ Customer Charges của 1 lô
-// hàng (mục 6 yêu cầu sau UAT: "Debit Note Dịch vụ => chỉ lấy SERVICE; Debit Note Chi hộ => chỉ lấy
-// DISBURSEMENT"). ADJUSTMENT/DISCOUNT không tự động kéo vào loại nào — Senior tự thêm dòng tay
-// ("Thêm dòng") vào đúng Debit Note cần điều chỉnh/chiết khấu.
+// [LEGACY] Loại Debit Note -> Charge Type tương ứng — trước đây mỗi Debit Note chỉ thuộc đúng 1
+// loại (dich_vu HOẶC chi_ho), dùng để lọc dòng gợi ý theo đúng loại. Giờ 1 Debit Note có thể chứa
+// CẢ 2 vùng (mỗi DÒNG debit_note_lines tự mang charge_type riêng — xem schema.sql), nên mặc định
+// KHÔNG còn lọc theo "loai" nữa khi lấy gợi ý (trả về toàn bộ, Frontend tự tách 2 vùng để hiển thị,
+// giống hệt cách tab "Debit Note (thu khách)" ở ShipmentForm.jsx đã làm). Giữ lại map này + query
+// "loai" (không bắt buộc) chỉ để tương thích ngược nếu nơi nào đó vẫn còn gọi kiểu cũ.
 const LOAI_TO_CHARGE_TYPE = { dich_vu: 'SERVICE', chi_ho: 'DISBURSEMENT' };
 
-// ================= GỢI Ý DÒNG TỪ CUSTOMER CHARGES (lọc theo Charge Type) =================
-// Trả về các dòng shipment_customer_charges của 1 lô hàng, đã lọc đúng Charge Type theo "loai" Debit
-// Note (dich_vu/chi_ho) — dùng để tự điền khi tạo Debit Note. KHÔNG ghi gì vào DB (chỉ đọc).
+function normalizeLineChargeType(t) {
+  return t === 'DISBURSEMENT' ? 'DISBURSEMENT' : 'SERVICE';
+}
+
+// ================= GỢI Ý DÒNG TỪ CUSTOMER CHARGES =================
+// Trả về các dòng shipment_customer_charges của 1 lô hàng — dùng để tự điền khi tạo/đồng bộ Debit
+// Note. KHÔNG ghi gì vào DB (chỉ đọc). Tham số "loai" không còn bắt buộc (xem ghi chú ở trên); nếu
+// Frontend vẫn truyền (tương thích ngược), sẽ lọc đúng như cũ.
 router.get('/suggest-lines', (req, res) => {
   const { shipment_id, loai } = req.query;
   if (!shipment_id) return res.status(400).json({ error: 'Thiếu shipment_id' });
@@ -24,7 +31,6 @@ router.get('/suggest-lines', (req, res) => {
       )
       .all(shipment_id, chargeType);
   } else {
-    // "loai" không hợp lệ / không truyền -> trả về toàn bộ (giữ hành vi cũ cho tương thích).
     rows = db
       .prepare(`SELECT * FROM shipment_customer_charges WHERE shipment_id = ? ORDER BY stt, id`)
       .all(shipment_id);
@@ -60,13 +66,62 @@ function getDebitNoteFull(id) {
   return { ...dn, lines, tong };
 }
 
+// ================= "1 SHIPMENT = 1 DEBIT NOTE" (tìm bản nháp hiện có, gộp bản nháp cũ nếu có) =====
+// Trước đây 1 lô hàng có thể sinh ra 2 Debit Note nháp riêng biệt (1 "Phí dịch vụ" + 1 "Phí chi
+// hộ", xem model cũ). Giờ chỉ dùng ĐÚNG 1 Debit Note / lô hàng (chứa cả 2 vùng dòng). Route này:
+// - Nếu tìm thấy nhiều hơn 1 bản NHÁP cho cùng shipment_id (dữ liệu cũ từ trước đợt gộp) -> tự động
+//   GỘP: dồn hết dòng chi phí về bản nháp có id nhỏ nhất (tạo trước), xoá các bản nháp còn lại. Chỉ
+//   chạy 1 lần cho mỗi lô hàng (sau khi gộp chỉ còn 1 bản nháp, lần gọi sau sẽ không cần gộp nữa).
+// - Các bản đã "Xác nhận" (status=confirmed) KHÔNG được gộp (đã khoá, không đụng vào) — trả về riêng
+//   để Frontend hiển thị cảnh báo (Senior cần "Huỷ xác nhận" thủ công nếu muốn gộp/sửa).
+// ĐẶT TRƯỚC route GET /:id để không bị nuốt route (path cố định, không phải :id).
+router.get('/by-shipment/:shipmentId', (req, res) => {
+  const shipmentId = req.params.shipmentId;
+  let drafts = db
+    .prepare(`SELECT * FROM debit_notes WHERE shipment_id = ? AND status = 'draft' ORDER BY id`)
+    .all(shipmentId);
+
+  if (drafts.length > 1) {
+    const primaryId = drafts[0].id;
+    const maxSttRow = db
+      .prepare(`SELECT COALESCE(MAX(stt), 0) as m FROM debit_note_lines WHERE debit_note_id = ?`)
+      .get(primaryId);
+    const moveLine = db.prepare(`UPDATE debit_note_lines SET debit_note_id = ?, stt = ? WHERE id = ?`);
+    const run = db.transaction(() => {
+      let stt = maxSttRow.m;
+      for (let i = 1; i < drafts.length; i++) {
+        const extraLines = db
+          .prepare(`SELECT id FROM debit_note_lines WHERE debit_note_id = ? ORDER BY stt, id`)
+          .all(drafts[i].id);
+        for (const l of extraLines) {
+          stt += 1;
+          moveLine.run(primaryId, stt, l.id);
+        }
+        db.prepare(`DELETE FROM debit_notes WHERE id = ?`).run(drafts[i].id);
+      }
+    });
+    run();
+    drafts = [db.prepare(`SELECT * FROM debit_notes WHERE id = ?`).get(primaryId)];
+  }
+
+  const confirmed = db
+    .prepare(`SELECT id, so_dn, loai FROM debit_notes WHERE shipment_id = ? AND status = 'confirmed' ORDER BY id`)
+    .all(shipmentId);
+
+  res.json({
+    draft: drafts[0] ? getDebitNoteFull(drafts[0].id) : null,
+    confirmed,
+  });
+});
+
 // ================= DANH SÁCH =================
 router.get('/', (req, res) => {
   const { shipment_id, customer_id, status, q, loai } = req.query;
   let sql = `
     SELECT dn.*,
       (SELECT COALESCE(SUM(l.don_gia * l.so_luong * (1 + COALESCE(l.vat_percent,0)/100.0)), 0)
-       FROM debit_note_lines l WHERE l.debit_note_id = dn.id) as tong_cong
+       FROM debit_note_lines l WHERE l.debit_note_id = dn.id) as tong_cong,
+      (SELECT GROUP_CONCAT(DISTINCT l.charge_type) FROM debit_note_lines l WHERE l.debit_note_id = dn.id) as charge_types
     FROM debit_notes dn WHERE 1=1`;
   const params = [];
   if (shipment_id) {
@@ -105,21 +160,20 @@ router.get('/:id', (req, res) => {
 });
 
 // ================= TẠO MỚI (snapshot toàn bộ tại đây) =================
-// Body: { loai, ngay_ct, shipment_id?, customer_id, bank_account_name/number/bank_name/bank_swift,
+// Body: { ngay_ct, shipment_id?, customer_id, bank_account_name/number/bank_name/bank_swift,
 //         nguoi_ky, chuc_danh_nguoi_ky, ghi_chu, lines: [{ mo_ta, don_vi_tinh, so_luong, don_gia,
-//         vat_percent, so_hoa_don, ghi_chu, source_charge_id? }] }
+//         vat_percent, so_hoa_don, ghi_chu, source_charge_id?, charge_type }] }
 // customer_id bắt buộc để snapshot thông tin KH; shipment_id không bắt buộc (Debit Note có thể
-// không gắn lô hàng cụ thể) nhưng nếu có sẽ snapshot thêm thông tin lô hàng.
+// không gắn lô hàng cụ thể) nhưng nếu có sẽ snapshot thêm thông tin lô hàng. "loai" KHÔNG còn nhận
+// từ Frontend nữa (xem [DEPRECATED] ở schema.sql) — mỗi dòng tự mang charge_type riêng, tự tính ở
+// dưới chỉ để giữ cột NOT NULL hợp lệ, không ảnh hưởng gì tới nội dung Debit Note.
 router.post('/', (req, res) => {
   const {
-    loai, ngay_ct, shipment_id, customer_id,
+    ngay_ct, shipment_id, customer_id,
     bank_account_name, bank_account_number, bank_name, bank_swift,
     nguoi_ky, chuc_danh_nguoi_ky, ghi_chu, lines,
   } = req.body;
 
-  if (!['dich_vu', 'chi_ho'].includes(loai)) {
-    return res.status(400).json({ error: 'Loại Debit Note không hợp lệ (dich_vu | chi_ho)' });
-  }
   if (!customer_id) return res.status(400).json({ error: 'Vui lòng chọn khách hàng' });
   if (!Array.isArray(lines) || lines.length === 0) {
     return res.status(400).json({ error: 'Debit Note cần ít nhất 1 dòng chi phí' });
@@ -131,6 +185,8 @@ router.post('/', (req, res) => {
   const company = db.prepare(`SELECT * FROM company_settings WHERE id = 1`).get() || {};
 
   const so_dn = nextCode('DN', 'debit_notes', 'so_dn');
+  // [DEPRECATED] chỉ để hợp lệ CHECK constraint cũ — xem ghi chú ở schema.sql.
+  const loai = lines.some((l) => normalizeLineChargeType(l.charge_type) !== 'DISBURSEMENT') ? 'dich_vu' : 'chi_ho';
 
   const insertDn = db.prepare(
     `INSERT INTO debit_notes (
@@ -144,8 +200,8 @@ router.post('/', (req, res) => {
   );
   const insertLine = db.prepare(
     `INSERT INTO debit_note_lines (
-      debit_note_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, so_hoa_don, ghi_chu
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+      debit_note_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, so_hoa_don, charge_type, ghi_chu
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   );
 
   const run = db.transaction(() => {
@@ -163,7 +219,7 @@ router.post('/', (req, res) => {
       insertLine.run(
         dnId, idx + 1, l.source_charge_id || null, l.mo_ta || '', l.don_vi_tinh || null,
         l.so_luong ?? 1, l.don_gia ?? 0, l.vat_percent === '' || l.vat_percent === undefined ? null : l.vat_percent,
-        l.so_hoa_don || null, l.ghi_chu || null
+        l.so_hoa_don || null, normalizeLineChargeType(l.charge_type), l.ghi_chu || null
       );
     });
     return dnId;
@@ -190,17 +246,20 @@ router.put('/:id', (req, res) => {
 
   const insertLine = db.prepare(
     `INSERT INTO debit_note_lines (
-      debit_note_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, so_hoa_don, ghi_chu
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+      debit_note_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, so_hoa_don, charge_type, ghi_chu
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   );
+  // [DEPRECATED] cập nhật lại cho gần đúng thực tế (không ảnh hưởng gì tới nội dung Debit Note) —
+  // xem ghi chú ở schema.sql / route POST phía trên.
+  const loai = lines.some((l) => normalizeLineChargeType(l.charge_type) !== 'DISBURSEMENT') ? 'dich_vu' : 'chi_ho';
 
   const run = db.transaction(() => {
     db.prepare(
       `UPDATE debit_notes SET ngay_ct=?, bank_account_name=?, bank_account_number=?, bank_name=?, bank_swift=?,
-       nguoi_ky=?, chuc_danh_nguoi_ky=?, ghi_chu=?, updated_at=datetime('now') WHERE id=?`
+       nguoi_ky=?, chuc_danh_nguoi_ky=?, ghi_chu=?, loai=?, updated_at=datetime('now') WHERE id=?`
     ).run(
       ngay_ct || null, bank_account_name || null, bank_account_number || null, bank_name || null,
-      bank_swift || null, nguoi_ky || null, chuc_danh_nguoi_ky || null, ghi_chu || null, req.params.id
+      bank_swift || null, nguoi_ky || null, chuc_danh_nguoi_ky || null, ghi_chu || null, loai, req.params.id
     );
     // Cách làm giống shipment_charges: xoá hết dòng cũ rồi tạo lại theo dữ liệu mới nhất — đơn
     // giản và an toàn vì debit_note_lines không có bảng con nào tham chiếu tới nó.
@@ -209,7 +268,7 @@ router.put('/:id', (req, res) => {
       insertLine.run(
         req.params.id, idx + 1, l.source_charge_id || null, l.mo_ta || '', l.don_vi_tinh || null,
         l.so_luong ?? 1, l.don_gia ?? 0, l.vat_percent === '' || l.vat_percent === undefined ? null : l.vat_percent,
-        l.so_hoa_don || null, l.ghi_chu || null
+        l.so_hoa_don || null, normalizeLineChargeType(l.charge_type), l.ghi_chu || null
       );
     });
   });

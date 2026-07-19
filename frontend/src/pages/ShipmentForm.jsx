@@ -130,6 +130,9 @@ function CustomerChargesTab({ shipmentId, navigate }) {
     if (item) {
       if (!row.don_vi_tinh && item.don_vi_tinh) patch.don_vi_tinh = item.don_vi_tinh;
       if (!row.don_gia && item.don_gia_mac_dinh != null) patch.don_gia = item.don_gia_mac_dinh;
+      // MỚI: tự điền VAT % theo "VAT mặc định" đã khai báo ở danh mục Cước dịch vụ (Catalog.jsx),
+      // giống cách Đơn giá mặc định đang hoạt động — chỉ điền khi dòng đang chưa chọn VAT nào khác.
+      if (row.vat_percent == null && item.vat_percent_mac_dinh != null) patch.vat_percent = item.vat_percent_mac_dinh;
     }
     updateLineFields(key, patch);
   };
@@ -367,6 +370,10 @@ export default function ShipmentForm() {
   // phí bên dưới. 2 khoản này thu ĐỘC LẬP (thường về 2 tài khoản khác nhau — xem 2 mẫu Debit Note).
   const [savedDoanhThuDichVu, setSavedDoanhThuDichVu] = useState(0);
   const [savedDoanhThuChiHo, setSavedDoanhThuChiHo] = useState(0);
+  // Tăng lên mỗi lần Lưu thành công ở chế độ Sửa để ép <CustomerChargesTab> tải lại từ đầu — cần
+  // thiết vì nếu Senior vừa thêm dòng chi phí mới, Debit Note sẽ tự có thêm dòng tương ứng (xem
+  // backend PUT /shipments/:id) nhưng tab đó đã tải 1 lần lúc mount nên không tự biết để tải lại.
+  const [chargesRefreshKey, setChargesRefreshKey] = useState(0);
 
   // ---- Tải danh mục ----
   useEffect(() => {
@@ -388,48 +395,54 @@ export default function ShipmentForm() {
     })();
   }, []);
 
+  // Dùng chung cho: (1) tải lô hàng khi vào màn Sửa, và (2) sau khi Lưu ở chế độ Sửa — Lưu xong
+  // KHÔNG rời màn hình nữa (xem handleSave), nên phải nạp lại dữ liệu mới nhất tại chỗ (đặc biệt là
+  // charges: sau khi Lưu, các dòng mới thêm sẽ có `id` thật từ server — quan trọng để lần Lưu kế
+  // tiếp không bị hiểu nhầm là "dòng mới" nữa, xem cờ is_new_charge ở handleSave).
+  const applyLoadedShipment = (data) => {
+    form.setFieldsValue({
+      ngay_ct: data.ngay_ct ? dayjs(data.ngay_ct) : null,
+      customer_id: data.customer_id,
+      invoice: data.invoice,
+      so_to_khai: data.so_to_khai,
+      po: data.po,
+      ngay_to_khai: data.ngay_to_khai ? dayjs(data.ngay_to_khai) : null,
+      so_container: data.so_container,
+      so_luong_cont: data.so_luong_cont,
+      cuoc_payment_method_id: data.cuoc_payment_method_id,
+      cuoc_thu_ngay: !!data.cuoc_thu_ngay,
+      chi_ho_payment_method_id: data.chi_ho_payment_method_id,
+      chi_ho_thu_ngay: !!data.chi_ho_thu_ngay,
+      ghi_chu: data.ghi_chu,
+    });
+    setCharges(
+      (data.charges || []).map((c) => ({
+        key: c.id ?? nextTempId(),
+        id: c.id,
+        loai_phi: c.loai_phi,
+        supplier_id: c.supplier_id,
+        payment_method_id: c.payment_method_id,
+        so_tien: c.so_tien,
+        da_thanh_toan: !!c.da_thanh_toan,
+        la_chi_ho: !!c.la_chi_ho,
+        ghi_chu: c.ghi_chu,
+      }))
+    );
+    setMaLo(data.ma_lo);
+    setCustomerName(data.customer_name);
+    setSavedDoanhThuDichVu(data.doanh_thu_dich_vu || 0);
+    setSavedDoanhThuChiHo(data.doanh_thu_chi_ho || 0);
+    setLinkedReceipts(data.linked_receipts || []);
+    setLinkedPayments(data.linked_payments || []);
+  };
+
   // ---- Tải lô hàng khi sửa ----
   useEffect(() => {
     if (!isEdit) return;
     setLoading(true);
     api
       .get(`/shipments/${id}`)
-      .then(({ data }) => {
-        form.setFieldsValue({
-          ngay_ct: data.ngay_ct ? dayjs(data.ngay_ct) : null,
-          customer_id: data.customer_id,
-          invoice: data.invoice,
-          so_to_khai: data.so_to_khai,
-          po: data.po,
-          ngay_to_khai: data.ngay_to_khai ? dayjs(data.ngay_to_khai) : null,
-          so_container: data.so_container,
-          so_luong_cont: data.so_luong_cont,
-          cuoc_payment_method_id: data.cuoc_payment_method_id,
-          cuoc_thu_ngay: !!data.cuoc_thu_ngay,
-          chi_ho_payment_method_id: data.chi_ho_payment_method_id,
-          chi_ho_thu_ngay: !!data.chi_ho_thu_ngay,
-          ghi_chu: data.ghi_chu,
-        });
-        setCharges(
-          (data.charges || []).map((c) => ({
-            key: c.id ?? nextTempId(),
-            id: c.id,
-            loai_phi: c.loai_phi,
-            supplier_id: c.supplier_id,
-            payment_method_id: c.payment_method_id,
-            so_tien: c.so_tien,
-            da_thanh_toan: !!c.da_thanh_toan,
-            la_chi_ho: !!c.la_chi_ho,
-            ghi_chu: c.ghi_chu,
-          }))
-        );
-        setMaLo(data.ma_lo);
-        setCustomerName(data.customer_name);
-        setSavedDoanhThuDichVu(data.doanh_thu_dich_vu || 0);
-        setSavedDoanhThuChiHo(data.doanh_thu_chi_ho || 0);
-        setLinkedReceipts(data.linked_receipts || []);
-        setLinkedPayments(data.linked_payments || []);
-      })
+      .then(({ data }) => applyLoadedShipment(data))
       .catch(() => message.error('Không tải được lô hàng'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -659,16 +672,27 @@ export default function ShipmentForm() {
           da_thanh_toan: c.da_thanh_toan,
           la_chi_ho: c.la_chi_ho,
           ghi_chu: c.ghi_chu,
+          // Dòng KHÔNG có `id` cũ (Senior vừa bấm "Thêm dòng chi phí" trong lần Sửa này) -> báo cho
+          // backend biết đây là dòng MỚI, cần tự sinh thêm dòng tương ứng bên Debit Note (Customer
+          // Charges), giống hệt lúc Tạo lô hàng lần đầu — xem PUT /shipments/:id ở backend.
+          is_new_charge: !c.id,
         })),
       };
       if (isEdit) {
-        await api.put(`/shipments/${id}`, payload);
+        const { data } = await api.put(`/shipments/${id}`, payload);
         message.success('Đã cập nhật lô hàng');
+        // KHÔNG điều hướng đi nữa — Senior thường sửa xong lô hàng rồi làm luôn qua tab Debit Note
+        // (Customer Charges) ngay bên dưới, rời màn hình lúc này sẽ ngắt luồng làm việc đó. Nạp lại
+        // dữ liệu mới nhất tại chỗ (charges có id thật) rồi ép tab Debit Note tải lại.
+        applyLoadedShipment(data);
+        setChargesRefreshKey((k) => k + 1);
       } else {
-        await api.post('/shipments', payload);
+        const { data } = await api.post('/shipments', payload);
         message.success('Đã tạo lô hàng');
+        // Không quay về danh sách nữa — chuyển sang màn Sửa của chính lô hàng vừa tạo (thay vì đóng
+        // màn hình) để Senior có thể làm luôn tab Debit Note (chỉ khả dụng khi đã có id thật).
+        navigate(`/shipments/${data.id}`, { replace: true });
       }
-      navigate('/shipments');
     } catch (e) {
       message.error(e?.response?.data?.error || 'Lưu thất bại');
     } finally {
@@ -807,7 +831,7 @@ export default function ShipmentForm() {
                 label: 'Debit Note (thu khách)',
                 disabled: !isEdit,
                 children: isEdit ? (
-                  <CustomerChargesTab shipmentId={id} navigate={navigate} />
+                  <CustomerChargesTab key={chargesRefreshKey} shipmentId={id} navigate={navigate} />
                 ) : (
                   <Typography.Text type="secondary">Lưu lô hàng trước để dùng tab này.</Typography.Text>
                 ),

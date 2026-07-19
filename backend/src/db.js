@@ -108,6 +108,25 @@ const insCat = db.prepare(`INSERT OR IGNORE INTO voucher_categories (name, type)
 for (const name of defaultVoucherCatsChi) insCat.run(name, 'chi');
 insCat.run('Thu khác', 'thu');
 
+// Đợt "gộp Debit Note 1 loại duy nhất" (không còn tách "Phí dịch vụ"/"Phí chi hộ" thành 2 Debit
+// Note riêng): mỗi DÒNG debit_note_lines giờ tự mang charge_type của mình. DB cũ chưa có cột này
+// -> ALTER thêm, mặc định 'SERVICE'. Sau đó chạy 1 lần (an toàn, chạy lại nhiều lần không sao) để
+// SỬA LẠI đúng dữ liệu cũ: những dòng thuộc về 1 Debit Note mà trước đây có loai='chi_ho' thì chắc
+// chắn TOÀN BỘ dòng của nó là Chi hộ (đúng theo model cũ: 1 Debit Note = 1 loại) -> set lại
+// charge_type='DISBURSEMENT' cho các dòng đó. Nhờ vậy sau bước này, mọi nơi khác trong code có thể
+// tin tưởng hoàn toàn vào debit_note_lines.charge_type (không cần suy luận lại từ debit_notes.loai
+// nữa) — xem routes/debit-notes.js.
+ensureColumn('debit_note_lines', 'charge_type', "charge_type TEXT NOT NULL DEFAULT 'SERVICE'");
+db.exec(
+  `UPDATE debit_note_lines SET charge_type = 'DISBURSEMENT'
+   WHERE charge_type = 'SERVICE'
+     AND debit_note_id IN (SELECT id FROM debit_notes WHERE loai = 'chi_ho')`
+);
+
+// Danh mục "Cước dịch vụ thường dùng": thêm VAT mặc định để tự điền VAT % khi Senior chọn 1 dòng
+// từ danh mục này ở tab Debit Note (thu khách) — DB cũ chưa có cột, mặc định NULL ("No VAT").
+ensureColumn('service_charge_catalog', 'vat_percent_mac_dinh', 'vat_percent_mac_dinh REAL');
+
 // Danh mục "Cước dịch vụ thường dùng" (mục 3a AI_HANDOVER.md) — tự thêm cho DB đã có sẵn của
 // Senior mỗi lần server khởi động (INSERT OR IGNORE theo UNIQUE(name), không tạo trùng), giống
 // cách seed defaultVoucherCatsChi ở trên.

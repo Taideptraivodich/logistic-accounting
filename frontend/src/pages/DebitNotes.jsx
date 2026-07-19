@@ -5,8 +5,20 @@ import { PlusOutlined, PrinterOutlined, EditOutlined, DeleteOutlined, CheckOutli
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
-const LOAI_LABEL = { dich_vu: 'Dịch vụ', chi_ho: 'Chi hộ' };
-const LOAI_COLOR = { dich_vu: 'blue', chi_ho: 'orange' };
+// "Loại" hiển thị giờ tính từ THÀNH PHẦN DÒNG THẬT SỰ (charge_types, xem GET /debit-notes ở
+// backend) chứ không còn dựa vào debit_notes.loai (đã [DEPRECATED] — 1 Debit Note giờ có thể chứa
+// CẢ 2 vùng Dịch vụ + Chi hộ cùng lúc, xem AI_HANDOVER.md).
+function renderLoaiTags(chargeTypesStr) {
+  const types = (chargeTypesStr || '').split(',').filter(Boolean);
+  const hasService = types.length === 0 || types.includes('SERVICE');
+  const hasDisbursement = types.includes('DISBURSEMENT');
+  return (
+    <>
+      {hasService && <Tag color="blue">Dịch vụ</Tag>}
+      {hasDisbursement && <Tag color="orange">Chi hộ</Tag>}
+    </>
+  );
+}
 
 export default function DebitNotes() {
   const navigate = useNavigate();
@@ -58,9 +70,9 @@ export default function DebitNotes() {
     { title: 'Số DN', dataIndex: 'so_dn', width: 120 },
     {
       title: 'Loại',
-      dataIndex: 'loai',
-      width: 100,
-      render: (v) => <Tag color={LOAI_COLOR[v]}>{LOAI_LABEL[v] || v}</Tag>,
+      dataIndex: 'charge_types',
+      width: 150,
+      render: (v) => renderLoaiTags(v),
     },
     { title: 'Khách hàng', dataIndex: 'customer_name' },
     { title: 'Mã lô', dataIndex: 'ma_lo', width: 110 },

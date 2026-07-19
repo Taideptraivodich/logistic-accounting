@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS service_charge_catalog (
   name TEXT NOT NULL UNIQUE,
   don_vi_tinh TEXT,
   don_gia_mac_dinh REAL,
+  vat_percent_mac_dinh REAL,          -- Thuế suất VAT mặc định (NULL = "No VAT" mặc định; 0/8/10 = %)
+                                        -- Khi Senior chọn 1 dòng danh mục ở tab Debit Note (thu khách),
+                                        -- VAT ở dòng đó được tự điền theo giá trị này (nếu dòng đang
+                                        -- chưa chọn VAT nào khác), giống cách Đơn giá mặc định hoạt động.
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -204,6 +208,11 @@ INSERT OR IGNORE INTO company_settings (id, name) VALUES (1, NULL);
 CREATE TABLE IF NOT EXISTS debit_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   so_dn TEXT NOT NULL UNIQUE,                 -- số Debit Note tự sinh, vd DN000001
+  -- loai: [DEPRECATED] Trước đây 1 Debit Note chỉ thuộc đúng 1 loại (dich_vu HOẶC chi_ho), tạo từ 1
+  -- lô hàng sẽ sinh ra 2 Debit Note riêng biệt. Theo yêu cầu mới: 1 Debit Note giờ có thể chứa CẢ 2
+  -- vùng dòng chi phí (Cước dịch vụ + Chi hộ), loại của từng dòng tự lưu ở debit_note_lines.charge_type
+  -- (xem bảng bên dưới) — cột này GIỮ LẠI chỉ để tương thích dữ liệu cũ + validate NOT NULL, giá trị
+  -- lưu khi tạo mới chỉ mang tính tham khảo (không còn dùng để xác định nội dung Debit Note nữa).
   loai TEXT NOT NULL DEFAULT 'dich_vu' CHECK(loai IN ('dich_vu','chi_ho')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','confirmed')),
   ngay_ct TEXT,
@@ -260,5 +269,11 @@ CREATE TABLE IF NOT EXISTS debit_note_lines (
   don_gia REAL NOT NULL DEFAULT 0,    -- Unit Price (Senior tự nhập/sửa, không lấy từ Cost)
   vat_percent REAL,                   -- NULL = "No VAT" (ngoài phạm vi thuế); 0/8/10 = % chịu thuế
   so_hoa_don TEXT,                    -- Số hoá đơn (NCC xuất, cho dòng "chi hộ")
+  -- charge_type: MỚI — mỗi DÒNG tự mang loại của mình (SERVICE/DISBURSEMENT) thay vì cả Debit Note
+  -- chỉ thuộc 1 loại duy nhất (đợt trước: 1 shipment sinh ra 2 Debit Note riêng biệt "Phí dịch vụ"/
+  -- "Phí chi hộ"). Giờ 1 Debit Note có thể chứa CẢ 2 vùng dòng (giống tab "Debit Note (thu khách)"
+  -- ở ShipmentForm.jsx), "loai" ở bảng debit_notes bên dưới trở thành [DEPRECATED] (xem ghi chú ở
+  -- đó) — không còn dùng để xác định dòng nào thuộc loại nào nữa.
+  charge_type TEXT NOT NULL DEFAULT 'SERVICE' CHECK(charge_type IN ('SERVICE','DISBURSEMENT')),
   ghi_chu TEXT                        -- Remark
 );

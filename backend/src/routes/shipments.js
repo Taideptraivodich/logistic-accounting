@@ -90,21 +90,25 @@ function regenerateAutoVouchers(shipmentId, {
   }
 }
 
-// "Debit Note" / Customer Charges: copy 1 LẦN DUY NHẤT từ Cost (shipment_charges) sang
-// shipment_customer_charges — dùng lúc tạo lô hàng mới, hoặc "lazy copy" lần đầu GET tab Customer
-// Charges của 1 lô hàng cũ (tạo trước khi có tính năng này, đã có Cost nhưng chưa có dòng nào ở
-// đây). Hàm này chỉ INSERT, không bao giờ tự gọi lại nếu bảng đã có dữ liệu (xem nơi gọi).
-function copyChargesToCustomerCharges(shipmentId, charges) {
+// "Debit Note" / Customer Charges: copy từ Cost (shipment_charges) sang shipment_customer_charges.
+// Dùng ở 3 nơi: (1) tạo lô hàng mới (copy TOÀN BỘ, startStt=0), (2) "lazy copy" lần đầu GET tab
+// Customer Charges của 1 lô hàng cũ (đã có Cost nhưng chưa có dòng nào ở đây, startStt=0), và
+// (3) Sửa lô hàng có THÊM dòng chi phí mới (chỉ copy đúng các dòng MỚI đó, nối tiếp sau các dòng đã
+// có sẵn — startStt = stt lớn nhất hiện tại, xem route PUT bên dưới). startStt cho phép gọi hàm này
+// nhiều lần cho cùng 1 shipment mà không đè lên các dòng đã có.
+function copyChargesToCustomerCharges(shipmentId, charges, startStt = 0) {
   if (!charges || charges.length === 0) return;
   const insert = db.prepare(
     `INSERT INTO shipment_customer_charges (shipment_id, stt, source_charge_id, mo_ta, don_vi_tinh, so_luong, don_gia, vat_percent, charge_type, ghi_chu)
      VALUES (?,?,?,?,?,?,?,?,?,?)`
   );
-  charges.forEach((c, idx) => {
+  let stt = startStt;
+  charges.forEach((c) => {
+    stt += 1;
     // Chi hộ (la_chi_ho=1) -> charge_type DISBURSEMENT, còn lại mặc định SERVICE. Senior tự sửa lại
     // Charge Type từng dòng ở tab Debit Note (Customer Charges) nếu cần phân loại ADJUSTMENT/DISCOUNT.
     const charge_type = c.la_chi_ho ? 'DISBURSEMENT' : 'SERVICE';
-    insert.run(shipmentId, idx + 1, c.id || null, c.loai_phi || '(chưa đặt tên)', null, 1, c.so_tien || 0, null, charge_type, null);
+    insert.run(shipmentId, stt, c.id || null, c.loai_phi || '(chưa đặt tên)', null, 1, c.so_tien || 0, null, charge_type, null);
   });
 }
 
@@ -321,19 +325,39 @@ router.put('/:id', (req, res) => {
       chi_ho_payment_method_id || null, chi_ho_thu_ngay ? 1 : 0, req.params.id
     );
 
-    // KHÔNG đụng tới shipment_customer_charges ở đây — theo đúng nguyên tắc "copy 1 lần lúc tạo,
-    // sau đó độc lập hoàn toàn". Sửa Cost khi Sửa lô hàng KHÔNG đồng bộ lại Customer Charges.
+    // Các dòng chi phí ĐÃ CÓ SẴN từ trước (Senior chỉ sửa lại giá trị) thì KHÔNG đụng tới Customer
+    // Charges tương ứng — giữ đúng nguyên tắc "copy 1 lần, sau đó độc lập hoàn toàn". NHƯNG nếu
+    // Senior THÊM DÒNG CHI PHÍ MỚI (vd "Phí vận chuyển") khi Sửa lô hàng, dòng đó chưa từng được
+    // copy sang Customer Charges lần nào — Debit Note phải tự sinh thêm dòng tương ứng NGAY, giống
+    // hệt hành vi lúc Tạo lô hàng lần đầu (trước đây bug này khiến Senior phải tự vào tab Debit Note
+    // để thêm tay dòng mới). Do bảng shipment_charges được xoá/tạo lại toàn bộ mỗi lần Lưu (id mới
+    // hoàn toàn mỗi lần), backend không thể tự suy ra dòng nào "mới" chỉ dựa vào id — nên dựa vào cờ
+    // `is_new_charge` mà Frontend tự đánh dấu (dòng KHÔNG có `id` cũ khi gửi lên, tức Senior vừa bấm
+    // "Thêm dòng chi phí" trong lần sửa này, không phải dòng tải sẵn từ server).
     db.prepare(`DELETE FROM shipment_charges WHERE shipment_id = ?`).run(req.params.id);
     const insCharge = db.prepare(
       `INSERT INTO shipment_charges (shipment_id, ngay_ct, loai_phi, supplier_id, payment_method_id, so_tien, da_thanh_toan, la_chi_ho, ghi_chu)
        VALUES (?,?,?,?,?,?,?,?,?)`
     );
+    const newlyAddedCharges = [];
     for (const c of charges) {
-      insCharge.run(
+      const chargeInfo = insCharge.run(
         req.params.id, c.ngay_ct || ngayCtHieuLuc, c.loai_phi || null,
         c.supplier_id || null, c.payment_method_id || null,
         c.so_tien || 0, c.da_thanh_toan ? 1 : 0, c.la_chi_ho ? 1 : 0, c.ghi_chu || null
       );
+      if (c.is_new_charge) {
+        newlyAddedCharges.push({
+          id: chargeInfo.lastInsertRowid, loai_phi: c.loai_phi, so_tien: c.so_tien || 0,
+          la_chi_ho: c.la_chi_ho ? 1 : 0,
+        });
+      }
+    }
+    if (newlyAddedCharges.length > 0) {
+      const maxSttRow = db
+        .prepare(`SELECT COALESCE(MAX(stt), 0) as maxStt FROM shipment_customer_charges WHERE shipment_id = ?`)
+        .get(req.params.id);
+      copyChargesToCustomerCharges(req.params.id, newlyAddedCharges, maxSttRow?.maxStt || 0);
     }
 
     // v3: xoá/tạo lại phiếu tự sinh theo dữ liệu vừa lưu (xem ghi chú ở regenerateAutoVouchers).
