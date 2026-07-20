@@ -20,6 +20,7 @@ import {
   FilePdfOutlined,
   UserOutlined,
   LogoutOutlined,
+  KeyOutlined,
 } from '@ant-design/icons';
 
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
@@ -36,6 +37,7 @@ import Vouchers from './pages/Vouchers.jsx';
 import DebitNotes from './pages/DebitNotes.jsx';
 import DebitNoteForm from './pages/DebitNoteForm.jsx';
 import DebitNotePrint from './pages/DebitNotePrint.jsx';
+import ChangePassword from './pages/ChangePassword.jsx';
 
 const { Header, Sider, Content } = Layout;
 
@@ -79,6 +81,12 @@ function Shell() {
   const { user, logout } = useAuth();
 
   const userMenuItems = [
+    {
+      key: 'change-password',
+      icon: <KeyOutlined />,
+      label: 'Đổi mật khẩu',
+      onClick: () => navigate('/change-password'),
+    },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
@@ -156,6 +164,7 @@ function Shell() {
             <Route path="/debit-notes/:id/print" element={<DebitNotePrint />} />
             <Route path="/doanh-thu" element={<DoanhThu />} />
             <Route path="/catalog" element={<Catalog />} />
+            <Route path="/change-password" element={<ChangePassword />} />
           </Routes>
         </Content>
       </Layout>
