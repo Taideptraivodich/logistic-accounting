@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography } from 'antd';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+  useLocation,
+} from 'react-router-dom';
+import { Layout, Menu, Typography, Dropdown, Avatar, Spin } from 'antd';
 import {
   DashboardOutlined,
   ContainerOutlined,
@@ -11,8 +18,12 @@ import {
   BarChartOutlined,
   SettingOutlined,
   FilePdfOutlined,
+  UserOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons';
 
+import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
+import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Shipments from './pages/Shipments.jsx';
 import ShipmentForm from './pages/ShipmentForm.jsx';
@@ -40,10 +51,44 @@ const menuItems = [
   { key: '/catalog', icon: <SettingOutlined />, label: 'Danh mục' },
 ];
 
+// Bọc quanh khu vực cần đăng nhập mới xem được: nếu chưa có token thì đá về /login
+// (nhớ lại trang đang định vào để sau khi đăng nhập xong quay lại đúng chỗ đó).
+function RequireAuth({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 80 }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+}
+
 function Shell() {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuth();
+
+  const userMenuItems = [
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: 'Đăng xuất',
+      onClick: () => {
+        logout();
+        navigate('/login', { replace: true });
+      },
+    },
+  ];
 
   const selectedKey =
     menuItems.find((m) => location.pathname === m.key || location.pathname.startsWith(m.key + '/'))
@@ -85,9 +130,15 @@ function Shell() {
             alignItems: 'center',
           }}
         >
-          <Typography.Title level={5} style={{ margin: 0 }}>
+          <Typography.Title level={5} style={{ margin: 0, flex: 1 }}>
             {menuItems.find((m) => m.key === selectedKey)?.label || ''}
           </Typography.Title>
+          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <Avatar size="small" icon={<UserOutlined />} />
+              <Typography.Text>{user?.fullName || user?.username}</Typography.Text>
+            </div>
+          </Dropdown>
         </Header>
         <Content style={{ margin: 16 }}>
           <Routes>
@@ -115,7 +166,19 @@ function Shell() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Shell />
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/*"
+            element={
+              <RequireAuth>
+                <Shell />
+              </RequireAuth>
+            }
+          />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

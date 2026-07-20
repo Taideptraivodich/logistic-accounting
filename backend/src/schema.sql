@@ -1,3 +1,13 @@
+-- ================= TÀI KHOẢN ĐĂNG NHẬP =================
+-- Bảng users cho màn hình Login. Mật khẩu lưu dạng hash (bcrypt), không lưu plain text.
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  full_name TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- ================= DANH MỤC =================
 CREATE TABLE IF NOT EXISTS customers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
