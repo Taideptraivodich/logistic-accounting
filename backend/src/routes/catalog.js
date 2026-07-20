@@ -41,7 +41,7 @@ function makeCrud(table, extraCols = []) {
   };
 }
 
-const customerCrud = makeCrud('customers', ['default_cuoc_dv', 'note', 'address', 'tax_code', 'contact_name']);
+const customerCrud = makeCrud('customers', ['default_cuoc_dv', 'note', 'address', 'tax_code', 'contact_name', 'phone']);
 router.get('/customers', customerCrud.list);
 router.post('/customers', customerCrud.create);
 router.put('/customers/:id', customerCrud.update);

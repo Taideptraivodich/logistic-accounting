@@ -21,9 +21,10 @@ const DEFAULT_SIGNER_NAME = "Hùng Anh";
 // inline style — xem AI_HANDOVER.md.
 //
 // Thứ tự block bắt buộc theo PDF mẫu (không đổi):
-// Header -> Tiêu đề -> Bảng -> Tổng cộng -> Thành tiền bằng chữ -> Thông tin thanh
-// toán -> Xin trân trọng cám ơn -> Khối chữ ký -> Đường kẻ ngang -> Thông tin công ty
-// -> DEBIT NOTE — Số...
+// Letterhead (thông tin BAYKAO ở trên đầu) -> Header -> Tiêu đề -> Bảng -> Tổng cộng ->
+// Thành tiền bằng chữ -> Thông tin thanh toán -> Xin trân trọng cám ơn -> Khối chữ ký ->
+// Đường kẻ ngang -> DEBIT NOTE — Số... (thông tin công ty CHỈ hiện 1 lần ở Letterhead, đã bỏ
+// khỏi khối cuối trang)
 // ----------------------------------------------------------------------------------
 
 function sumLines(lines) {
@@ -44,6 +45,37 @@ function fmtDate(d) {
   return `${day}/${m}/${y}`;
 }
 
+// ===== LETTERHEAD: khung thông tin BAYKAO ở TRÊN ĐẦU trang, đúng như file PDF mẫu
+// (tên công ty in đậm màu xanh giữa khung, địa chỉ, MST/ĐT/Email, rồi 1 đường kẻ đúp) =====
+function DebitNoteLetterhead({ dn }) {
+  if (
+    !dn.company_name &&
+    !dn.company_address &&
+    !dn.company_tax_code &&
+    !dn.company_phone &&
+    !dn.company_email
+  ) {
+    return null;
+  }
+  return (
+    <div className="dn-letterhead">
+      {dn.company_name && (
+        <div className="dn-letterhead-name">{dn.company_name}</div>
+      )}
+      {dn.company_address && (
+        <div className="dn-letterhead-address">{dn.company_address}</div>
+      )}
+      {(dn.company_tax_code || dn.company_phone || dn.company_email) && (
+        <div className="dn-letterhead-contact">
+          {dn.company_tax_code && `MST: ${dn.company_tax_code}`}
+          {dn.company_phone && `  Điện thoại.: ${dn.company_phone}`}
+          {dn.company_email && `  Email: ${dn.company_email}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== HEADER: Kính gửi (trái) + Ngày (phải), rồi câu mở đầu + dòng tờ khai =====
 function DebitNoteHeader({ dn }) {
   return (
@@ -57,6 +89,7 @@ function DebitNoteHeader({ dn }) {
           {dn.customer_tax_code && (
             <div>Mã số thuế: {dn.customer_tax_code}</div>
           )}
+          {dn.customer_phone && <div>Điện thoại: {dn.customer_phone}</div>}
           {dn.customer_contact_name && (
             <div>Kính gửi: {dn.customer_contact_name}</div>
           )}
@@ -192,25 +225,16 @@ function DebitNoteSignature({ dn }) {
   );
 }
 
-// ===== ĐƯỜNG KẺ NGANG + THÔNG TIN CÔNG TY + DEBIT NOTE — SỐ... =====
+// ===== ĐƯỜNG KẺ NGANG + DEBIT NOTE — SỐ... =====
+// [ĐÃ BỎ khối thông tin công ty lặp lại ở đây theo yêu cầu Senior] — thông tin công ty giờ CHỈ
+// hiện đúng 1 lần, ở khối Letterhead trên đầu trang (xem DebitNoteLetterhead). Giữ lại đường kẻ
+// ngang phân cách + dòng "DEBIT NOTE — Số..." như cũ.
 function DebitNoteFooter({ dn, docTitle, pageLabel }) {
   return (
-    <>
-      <div className="dn-company-footer">
-        <div className="dn-company-name">{dn.company_name}</div>
-        {dn.company_address && <div>{dn.company_address}</div>}
-        <div>
-          {dn.company_tax_code && `MST: ${dn.company_tax_code}`}
-          {dn.company_phone && ` — Điện thoại: ${dn.company_phone}`}
-          {dn.company_email && ` — Email: ${dn.company_email}`}
-        </div>
-      </div>
-
-      <div className="dn-doc-title">
-        {docTitle} — Số: {dn.so_dn}
-        {pageLabel && <span className="dn-page-label"> ({pageLabel})</span>}
-      </div>
-    </>
+    <div className="dn-doc-title">
+      {docTitle} — Số: {dn.so_dn}
+      {pageLabel && <span className="dn-page-label"> ({pageLabel})</span>}
+    </div>
   );
 }
 
@@ -229,6 +253,7 @@ function DnPage({
   const totals = sumLines(lines);
   return (
     <div className="dn-sheet">
+      <DebitNoteLetterhead dn={dn} />
       <DebitNoteHeader dn={dn} />
       <DebitNoteTable
         title={sectionTitle}

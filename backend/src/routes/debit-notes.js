@@ -197,12 +197,12 @@ router.post('/', (req, res) => {
     `INSERT INTO debit_notes (
       so_dn, loai, status, ngay_ct, shipment_id,
       company_name, company_address, company_tax_code, company_phone, company_email,
-      customer_id, customer_name, customer_address, customer_tax_code, customer_contact_name,
+      customer_id, customer_name, customer_address, customer_tax_code, customer_contact_name, customer_phone,
       ma_lo, invoice, so_to_khai, ngay_to_khai, so_container, po,
       dv_bank_account_name, dv_bank_account_number, dv_bank_name, dv_bank_swift,
       chi_ho_bank_account_name, chi_ho_bank_account_number, chi_ho_bank_name, chi_ho_bank_swift,
       nguoi_ky, chuc_danh_nguoi_ky, ghi_chu
-    ) VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`
+    ) VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`
   );
   const insertLine = db.prepare(
     `INSERT INTO debit_note_lines (
@@ -214,7 +214,7 @@ router.post('/', (req, res) => {
     const info = insertDn.run(
       so_dn, loai, 'draft', ngay_ct || null, shipment_id || null,
       company.name || null, company.address || null, company.tax_code || null, company.phone || null, company.email || null,
-      customer_id, customer.name, customer.address || null, customer.tax_code || null, customer.contact_name || null,
+      customer_id, customer.name, customer.address || null, customer.tax_code || null, customer.contact_name || null, customer.phone || null,
       shipment?.ma_lo || null, shipment?.invoice || null, shipment?.so_to_khai || null,
       shipment?.ngay_to_khai || null, shipment?.so_container || null, shipment?.po || null,
       dv_bank_account_name || null, dv_bank_account_number || null, dv_bank_name || null, dv_bank_swift || null,
@@ -261,15 +261,21 @@ router.put('/:id', (req, res) => {
   // [DEPRECATED] cập nhật lại cho gần đúng thực tế (không ảnh hưởng gì tới nội dung Debit Note) —
   // xem ghi chú ở schema.sql / route POST phía trên.
   const loai = lines.some((l) => normalizeLineChargeType(l.charge_type) !== 'DISBURSEMENT') ? 'dich_vu' : 'chi_ho';
+  // Debit Note còn ở trạng thái draft (chưa "phát hành") -> khi Senior mở Sửa + Lưu lại, chụp lại
+  // luôn company_settings mới nhất (ví dụ Senior vừa điền/sửa ở tab "Công ty" sau khi tạo nháp).
+  // Không đụng tới debit_notes ĐÃ confirmed (route này đã chặn ở check phía trên).
+  const company = db.prepare(`SELECT * FROM company_settings WHERE id = 1`).get() || {};
 
   const run = db.transaction(() => {
     db.prepare(
       `UPDATE debit_notes SET ngay_ct=?,
+       company_name=?, company_address=?, company_tax_code=?, company_phone=?, company_email=?,
        dv_bank_account_name=?, dv_bank_account_number=?, dv_bank_name=?, dv_bank_swift=?,
        chi_ho_bank_account_name=?, chi_ho_bank_account_number=?, chi_ho_bank_name=?, chi_ho_bank_swift=?,
        nguoi_ky=?, chuc_danh_nguoi_ky=?, ghi_chu=?, loai=?, updated_at=datetime('now') WHERE id=?`
     ).run(
       ngay_ct || null,
+      company.name || null, company.address || null, company.tax_code || null, company.phone || null, company.email || null,
       dv_bank_account_name || null, dv_bank_account_number || null, dv_bank_name || null, dv_bank_swift || null,
       chi_ho_bank_account_name || null, chi_ho_bank_account_number || null, chi_ho_bank_name || null, chi_ho_bank_swift || null,
       nguoi_ky || null, chuc_danh_nguoi_ky || null, ghi_chu || null, loai, req.params.id

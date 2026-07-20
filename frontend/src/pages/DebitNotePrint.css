@@ -1,8 +1,8 @@
 /* DebitNotePrint.css
  * CSS cho giao diện in Debit Note — tổ chức theo từng block của PDF mẫu, theo đúng
- * thứ tự: Header -> Tiêu đề -> Bảng -> Tổng cộng -> Thành tiền bằng chữ ->
- * Thông tin thanh toán -> Cảm ơn -> Chữ ký -> Đường kẻ ngang -> Thông tin công ty ->
- * DEBIT NOTE - Số...
+ * thứ tự: Letterhead (thông tin BAYKAO trên đầu) -> Header -> Tiêu đề -> Bảng ->
+ * Tổng cộng -> Thành tiền bằng chữ -> Thông tin thanh toán -> Cảm ơn -> Chữ ký ->
+ * Đường kẻ ngang -> DEBIT NOTE - Số... (thông tin công ty CHỈ hiện 1 lần ở Letterhead).
  * Không đổi business logic / API / DB — chỉ là CSS cho phần in.
  */
 
@@ -28,6 +28,29 @@
 
 .dn-sheet + .dn-sheet {
   margin-top: 20px;
+}
+
+/* ===== LETTERHEAD: khung thông tin BAYKAO ở trên đầu trang (giống mẫu PDF) ===== */
+.dn-letterhead {
+  text-align: center;
+  border-bottom: 3px double #000;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+}
+
+.dn-letterhead-name {
+  font-weight: 700;
+  font-size: 14px;
+  color: #1a3f8f;
+  text-transform: uppercase;
+}
+
+.dn-letterhead-address {
+  font-style: italic;
+}
+
+.dn-letterhead-contact {
+  font-style: italic;
 }
 
 /* ===== HEADER: Kính gửi (trái) / Ngày (phải) ===== */
@@ -142,19 +165,11 @@
   margin: 0;
 }
 
-/* ===== ĐƯỜNG KẺ NGANG + THÔNG TIN CÔNG TY ===== */
-.dn-company-footer {
-  border-top: 1px solid #000;
-  text-align: center;
-  color: #000;
-}
-
-.dn-company-name {
-  font-weight: 700;
-}
-
-/* ===== DEBIT NOTE — SỐ... ===== */
+/* ===== DEBIT NOTE — SỐ... (đường kẻ ngang phân cách phía trên, thông tin công ty đã bỏ khỏi
+   đây — chỉ hiện 1 lần ở Letterhead trên đầu trang) ===== */
 .dn-doc-title {
+  border-top: 1px solid #000;
+  padding-top: 4px;
   text-align: center;
   font-weight: 700;
 }

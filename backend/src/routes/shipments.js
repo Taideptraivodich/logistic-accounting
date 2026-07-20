@@ -138,7 +138,7 @@ function getShipmentFull(id) {
   const shipment = db
     .prepare(
       `SELECT s.*, c.name as customer_name, c.address as customer_address, c.tax_code as customer_tax_code,
-        c.contact_name as customer_contact_name, pm.name as cuoc_payment_method_name,
+        c.contact_name as customer_contact_name, c.phone as customer_phone, pm.name as cuoc_payment_method_name,
         pm2.name as chi_ho_payment_method_name
        FROM shipments s
        LEFT JOIN customers c ON c.id = s.customer_id

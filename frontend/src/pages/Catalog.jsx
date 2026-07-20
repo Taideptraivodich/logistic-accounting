@@ -192,6 +192,74 @@ function GenericCatalog({
   );
 }
 
+// ===== "Công ty" (Thông tin BAYKAO hiện ở đầu phiếu in Debit Note) =====
+// Khác GenericCatalog: đây là 1 bảng CHỈ 1 dòng cố định (id=1), không phải danh mục dạng list ->
+// dùng Form riêng, GET/PUT thẳng /company-settings (route đã có sẵn ở backend, trước giờ chỉ
+// thiếu đúng UI này). Lưu ý: sửa ở đây KHÔNG tự cập nhật ngược các Debit Note đã tạo trước đó (dữ
+// liệu công ty được "chụp" - snapshot - vào từng Debit Note tại thời điểm tạo/sửa nháp), chỉ ảnh
+// hưởng Debit Note tạo mới hoặc nháp (draft) đang sửa + lưu lại sau khi đổi ở đây.
+function CompanySettingsPanel() {
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api
+      .get("/company-settings")
+      .then((res) => form.setFieldsValue(res.data || {}))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const handleSave = async () => {
+    try {
+      const v = await form.validateFields();
+      setSaving(true);
+      const res = await api.put("/company-settings", v);
+      form.setFieldsValue(res.data || {});
+      message.success(
+        "Đã lưu. Lưu ý: Debit Note đã tạo trước đó không tự đổi theo — chỉ Debit Note tạo mới, hoặc nháp đang sửa rồi Lưu lại, mới lấy thông tin công ty mới nhất này.",
+      );
+    } catch (e) {
+      if (!e?.errorFields)
+        message.error(e?.response?.data?.error || "Có lỗi xảy ra");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 520 }}>
+      <Form form={form} layout="vertical" disabled={loading}>
+        <Form.Item
+          label="Tên công ty"
+          name="name"
+          rules={[{ required: true, message: "Vui lòng nhập tên công ty" }]}
+        >
+          <Input placeholder="CÔNG TY TNHH BAYKAO" />
+        </Form.Item>
+        <Form.Item label="Địa chỉ" name="address">
+          <Input />
+        </Form.Item>
+        <Form.Item label="Mã số thuế" name="tax_code">
+          <Input />
+        </Form.Item>
+        <Form.Item label="Điện thoại" name="phone">
+          <Input />
+        </Form.Item>
+        <Form.Item label="Email" name="email">
+          <Input />
+        </Form.Item>
+        <Button type="primary" loading={saving} onClick={handleSave}>
+          Lưu
+        </Button>
+      </Form>
+    </div>
+  );
+}
+
 export default function Catalog() {
   const items = [
     {
@@ -207,6 +275,10 @@ export default function Catalog() {
               label: "Cước DV mặc định",
               type: "number",
             },
+            { name: "address", label: "Địa chỉ", type: "text" },
+            { name: "tax_code", label: "Mã số thuế", type: "text" },
+            { name: "phone", label: "Số điện thoại", type: "text" },
+            { name: "contact_name", label: "Người liên hệ", type: "text" },
             { name: "note", label: "Ghi chú", type: "text" },
           ]}
         />
@@ -316,6 +388,11 @@ export default function Catalog() {
           fixedFields={{ type: "chi" }}
         />
       ),
+    },
+    {
+      key: "company",
+      label: "Công ty",
+      children: <CompanySettingsPanel />,
     },
   ];
 

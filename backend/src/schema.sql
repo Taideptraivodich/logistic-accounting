@@ -4,6 +4,10 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL UNIQUE,
   default_cuoc_dv REAL DEFAULT 0,
   note TEXT,
+  address TEXT,
+  tax_code TEXT,
+  contact_name TEXT,
+  phone TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -231,6 +235,7 @@ CREATE TABLE IF NOT EXISTS debit_notes (
   customer_address TEXT,
   customer_tax_code TEXT,
   customer_contact_name TEXT,
+  customer_phone TEXT,
 
   -- Snapshot lô hàng (Shipment Information)
   ma_lo TEXT,

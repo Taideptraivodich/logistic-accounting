@@ -89,6 +89,24 @@ db.exec(`INSERT OR IGNORE INTO fee_types (name) VALUES ('Phí ra vào cổng')`)
 ensureColumn('customers', 'address', 'address TEXT');
 ensureColumn('customers', 'tax_code', 'tax_code TEXT');
 ensureColumn('customers', 'contact_name', 'contact_name TEXT');
+// Bổ sung SĐT khách hàng vào danh mục Khách hàng + snapshot Debit Note (yêu cầu thêm sau đợt trên).
+ensureColumn('customers', 'phone', 'phone TEXT');
+ensureColumn('debit_notes', 'customer_phone', 'customer_phone TEXT');
+// company_settings có sẵn ở schema.sql (INSERT OR IGNORE id=1) nhưng trước giờ CHƯA có UI ở
+// "Danh mục" để Senior tự nhập -> mọi Debit Note tạo ra đều bị NULL hết company_name/address/...
+// -> khối "thông tin BAYKAO" ở đầu phiếu in không hiện được (không phải lỗi hiển thị, mà do
+// không có dữ liệu). Seed sẵn đúng thông tin BAYKAO thật (theo mẫu PDF gốc) làm mặc định — chỉ
+// khi CHƯA có ai điền (name IS NULL), không ghi đè nếu Senior đã tự sửa qua tab "Công ty" mới.
+db.prepare(
+  `UPDATE company_settings SET name = ?, address = ?, tax_code = ?, phone = ?, email = ?
+   WHERE id = 1 AND name IS NULL`
+).run(
+  'CÔNG TY TNHH BAYKAO',
+  'Số 1770, Đường Nguyễn Ái Quốc, Phường Trấn Biên, Tỉnh Đồng Nai, Việt Nam',
+  '3603654216',
+  '(84) 0984.722.669 ~ 0826 114 716',
+  'baykaoltd@gmail.com'
+);
 // PO thuộc về lô hàng (dùng chung cho mọi Debit Note tạo từ lô hàng đó), tương tự so_to_khai.
 ensureColumn('shipments', 'po', 'po TEXT');
 // Tận dụng lại "Quỹ" (payment_methods) làm nguồn gợi ý tài khoản ngân hàng cho Debit Note, thay
