@@ -5,93 +5,35 @@ import { ArrowLeftOutlined, PrinterOutlined } from "@ant-design/icons";
 import api from "../api/client";
 import { formatMoney } from "../utils/format";
 import { numberToVietnameseWords } from "../utils/numberToWordsVi";
+import "./DebitNotePrint.css";
 
 const SERVICE_SECTION_TITLE = "PHÍ DỊCH VỤ HẢI QUAN";
 const DISBURSEMENT_SECTION_TITLE = "PHÍ CHI HỘ";
+
+// Fallback chữ ký khi API trả null — không được để trống (yêu cầu bổ sung).
+const DEFAULT_SIGNER_TITLE = "Trưởng phòng kinh doanh";
+const DEFAULT_SIGNER_NAME = "Hùng Anh";
+
+// ----------------------------------------------------------------------------------
+// CHỈ refactor GIAO DIỆN IN (layout/CSS) cho giống mẫu PDF gốc — KHÔNG đổi business
+// logic/API/DB. Toàn bộ số liệu vẫn lấy từ `dn` (kết quả GET /debit-notes/:id) như cũ.
+// Toàn bộ CSS đã tách sang DebitNotePrint.css, JSX chỉ dùng className, không dùng
+// inline style — xem AI_HANDOVER.md.
+//
+// Thứ tự block bắt buộc theo PDF mẫu (không đổi):
+// Header -> Tiêu đề -> Bảng -> Tổng cộng -> Thành tiền bằng chữ -> Thông tin thanh
+// toán -> Xin trân trọng cám ơn -> Khối chữ ký -> Đường kẻ ngang -> Thông tin công ty
+// -> DEBIT NOTE — Số...
+// ----------------------------------------------------------------------------------
 
 function sumLines(lines) {
   return lines.reduce(
     (acc, l) => ({
       thanh_tien: acc.thanh_tien + l.thanh_tien,
+      vat: acc.vat + (l.tong_cong - l.thanh_tien),
       tong_cong: acc.tong_cong + l.tong_cong,
     }),
-    { thanh_tien: 0, tong_cong: 0 },
-  );
-}
-
-// 1 khối bảng "CHI TIẾT" cho 1 vùng (Dịch vụ / Chi hộ) — Debit Note giờ có thể chứa CẢ 2 vùng cùng
-// lúc (xem AI_HANDOVER.md, "gộp Debit Note 1 loại duy nhất"), nên in ra như 2 khối riêng nếu cả 2
-// đều có dòng; chỉ 1 khối (không cần tiêu đề phụ) nếu Debit Note này chỉ có đúng 1 vùng.
-function LineSection({ title, lines, withInvoiceCol, showTitle }) {
-  if (lines.length === 0) return null;
-  const totals = sumLines(lines);
-  return (
-    <div style={{ marginBottom: 14 }}>
-      {showTitle && (
-        <div
-          style={{
-            textAlign: "center",
-            fontWeight: 700,
-            fontSize: 15,
-            margin: "8px 0 2px",
-          }}
-        >
-          {title}
-        </div>
-      )}
-      <table>
-        <thead>
-          <tr>
-            <th style={{ width: 32 }}>STT</th>
-            <th>CHI TIẾT</th>
-            <th style={{ width: 70 }}>ĐVT</th>
-            <th style={{ width: 90 }}>Đơn giá (VND)</th>
-            <th style={{ width: 50 }}>SL</th>
-            <th style={{ width: 100 }}>THÀNH TIỀN (VND)</th>
-            <th style={{ width: 90 }}>VAT</th>
-            <th style={{ width: 100 }}>Tổng tiền gồm VAT</th>
-            {withInvoiceCol && <th style={{ width: 80 }}>Số Hóa Đơn</th>}
-            <th style={{ width: 100 }}>Ghi Chú</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((l, idx) => (
-            <tr key={l.id}>
-              <td style={{ textAlign: "center" }}>{idx + 1}</td>
-              <td>{l.mo_ta}</td>
-              <td style={{ textAlign: "center" }}>{l.don_vi_tinh}</td>
-              <td style={{ textAlign: "right" }}>{formatMoney(l.don_gia)}</td>
-              <td style={{ textAlign: "center" }}>{l.so_luong}</td>
-              <td style={{ textAlign: "right" }}>
-                {formatMoney(l.thanh_tien)}
-              </td>
-              <td style={{ textAlign: "center" }}>
-                {l.vat_percent === null ? "" : `${l.vat_percent}%`}
-              </td>
-              <td style={{ textAlign: "right" }}>{formatMoney(l.tong_cong)}</td>
-              {withInvoiceCol && (
-                <td style={{ textAlign: "center" }}>{l.so_hoa_don}</td>
-              )}
-              <td>{l.ghi_chu}</td>
-            </tr>
-          ))}
-          <tr>
-            <td colSpan={5} style={{ textAlign: "right", fontWeight: 700 }}>
-              TỔNG CỘNG
-            </td>
-            <td style={{ textAlign: "right", fontWeight: 700 }}>
-              {formatMoney(totals.thanh_tien)}
-            </td>
-            <td />
-            <td style={{ textAlign: "right", fontWeight: 700 }}>
-              {formatMoney(totals.tong_cong)}
-            </td>
-            {withInvoiceCol && <td />}
-            <td />
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    { thanh_tien: 0, vat: 0, tong_cong: 0 },
   );
 }
 
@@ -102,75 +44,104 @@ function fmtDate(d) {
   return `${day}/${m}/${y}`;
 }
 
-// 1 TRANG in hoàn chỉnh (Kính gửi / Tờ khai / bảng chi tiết của ĐÚNG 1 vùng / Thành tiền bằng chữ /
-// Thông tin nhận tiền / chữ ký / footer công ty / dòng số Debit Note) — trước đây khi 1 Debit Note
-// gộp cả 2 vùng (Cước dịch vụ + Chi hộ) thì in ra CÙNG 1 trang, 2 bảng nối tiếp nhau. Theo yêu cầu:
-// tách thành 2 TRANG IN riêng biệt, mỗi trang là 1 phiếu Debit Note hoàn chỉnh của đúng 1 vùng —
-// giống hệt 2 mẫu PDF gốc trước khi gộp (xem AI_HANDOVER.md). `pageLabel` chỉ hiển thị khi có cả 2
-// trang, để phân biệt "Trang 1/2" / "Trang 2/2" (không ảnh hưởng tới việc chỉ có đúng 1 số Debit
-// Note cho cả 2 trang — bản chất vẫn là 1 Debit Note, chỉ in tách trang).
-function DnPage({
-  dn,
-  sectionTitle,
-  lines,
-  withInvoiceCol,
-  docTitle,
-  pageLabel,
-  breakBefore,
-  bank,
-}) {
-  const totals = sumLines(lines);
+// ===== HEADER: Kính gửi (trái) + Ngày (phải), rồi câu mở đầu + dòng tờ khai =====
+function DebitNoteHeader({ dn }) {
   return (
-    <div
-      className="dn-sheet"
-      style={{
-        background: "#fff",
-        maxWidth: 900,
-        margin: "0 auto",
-        padding: "32px 40px",
-        boxShadow: "0 0 8px rgba(0,0,0,0.1)",
-        fontFamily: "Arial, sans-serif",
-        color: "#111",
-        breakBefore: breakBefore ? "page" : "auto",
-      }}
-    >
-      <div style={{ textAlign: "right", fontSize: 13 }}>
-        Ngày: {fmtDate(dn.ngay_ct)}
-      </div>
-
-      <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.7 }}>
-        <div>
-          Kính gửi: <b>{dn.customer_name}</b>
+    <>
+      <div className="dn-header">
+        <div className="dn-header-left">
+          <div>
+            Kính gửi: <b>{dn.customer_name}</b>
+          </div>
+          {dn.customer_address && <div>Địa chỉ: {dn.customer_address}</div>}
+          {dn.customer_tax_code && (
+            <div>Mã số thuế: {dn.customer_tax_code}</div>
+          )}
+          {dn.customer_contact_name && (
+            <div>Kính gửi: {dn.customer_contact_name}</div>
+          )}
         </div>
-        {dn.customer_address && <div>Địa chỉ: {dn.customer_address}</div>}
-        {dn.customer_tax_code && <div>Mã số thuế: {dn.customer_tax_code}</div>}
-        {dn.customer_contact_name && (
-          <div>Kính gửi: {dn.customer_contact_name}</div>
-        )}
+        <div className="dn-header-right">Ngày: {fmtDate(dn.ngay_ct)}</div>
       </div>
 
-      <div style={{ margin: "10px 0", fontSize: 13 }}>
+      <div className="dn-intro">
         {dn.company_name || "Công ty"} xin được gửi debit note như sau:
       </div>
+    </>
+  );
+}
 
-      <div style={{ fontSize: 12.5, marginBottom: 8 }}>
-        {dn.so_to_khai && `Tờ Khai ${dn.so_to_khai}`}
-        {dn.ngay_to_khai && ` ngày ${fmtDate(dn.ngay_to_khai)}`}
-        {dn.po && ` PO#${dn.po}`}
-      </div>
+// ===== TIÊU ĐỀ + DÒNG TỜ KHAI (ngay dưới tiêu đề) + BẢNG + TỔNG CỘNG =====
+function DebitNoteTable({ title, dn, lines, withInvoiceCol }) {
+  if (lines.length === 0) return null;
+  const totals = sumLines(lines);
+  return (
+    <>
+      <div className="dn-title">{title}</div>
 
-      <LineSection
-        title={sectionTitle}
-        lines={lines}
-        withInvoiceCol={withInvoiceCol}
-        showTitle
-      />
+      {(dn.so_to_khai || dn.po) && (
+        <div className="dn-declaration">
+          {dn.so_to_khai && `Tờ Khai ${dn.so_to_khai}`}
+          {dn.ngay_to_khai && ` ngày ${fmtDate(dn.ngay_to_khai)}`}
+          {dn.po && ` PO#${dn.po}`}
+        </div>
+      )}
 
-      <div style={{ marginTop: 10, fontSize: 13 }}>
+      <table className="dn-table">
+        <thead>
+          <tr>
+            <th>STT</th>
+            <th>CHI TIẾT</th>
+            <th>ĐVT</th>
+            <th>ĐƠN GIÁ (VND)</th>
+            <th>SL</th>
+            <th>THÀNH TIỀN (VND)</th>
+            <th>VAT</th>
+            <th>TỔNG TIỀN GỒM VAT</th>
+            {withInvoiceCol && <th>SỐ HÓA ĐƠN</th>}
+            <th>GHI CHÚ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l, idx) => (
+            <tr key={l.id}>
+              <td>{idx + 1}</td>
+              <td className="dn-col-detail">{l.mo_ta}</td>
+              <td>{l.don_vi_tinh}</td>
+              <td className="dn-col-money">{formatMoney(l.don_gia)}</td>
+              <td>{l.so_luong}</td>
+              <td className="dn-col-money">{formatMoney(l.thanh_tien)}</td>
+              <td>{l.vat_percent === null ? "" : `${l.vat_percent}%`}</td>
+              <td className="dn-col-money">{formatMoney(l.tong_cong)}</td>
+              {withInvoiceCol && <td>{l.so_hoa_don}</td>}
+              <td className="dn-col-detail">{l.ghi_chu}</td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={5} className="dn-total-label">
+              TỔNG CỘNG
+            </td>
+            <td className="dn-total-money">{formatMoney(totals.thanh_tien)}</td>
+            <td className="dn-total-money">{formatMoney(totals.vat)}</td>
+            <td className="dn-total-money">{formatMoney(totals.tong_cong)}</td>
+            {withInvoiceCol && <td />}
+            <td />
+          </tr>
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+// ===== THÀNH TIỀN BẰNG CHỮ + THÔNG TIN THANH TOÁN =====
+function DebitNotePaymentBlock({ totals, bank }) {
+  return (
+    <>
+      <div className="dn-amount-words">
         Thành Tiền: <b>{numberToVietnameseWords(totals.tong_cong)}</b>./.
       </div>
 
-      <div style={{ marginTop: 14, fontSize: 13, lineHeight: 1.7 }}>
+      <div className="dn-payment-info">
         Kính đề nghị Quý Công ty Thanh Toán qua TK sau:
         <br />
         {bank.account_number && (
@@ -198,33 +169,35 @@ function DnPage({
           </>
         )}
       </div>
+    </>
+  );
+}
 
-      <div style={{ marginTop: 10, fontSize: 13 }}>Xin trân trọng cám ơn!</div>
+// ===== XIN TRÂN TRỌNG CÁM ƠN + KHỐI CHỮ KÝ =====
+// Fallback bắt buộc: nếu API trả null cho chuc_danh_nguoi_ky / nguoi_ky thì dùng giá
+// trị mặc định của mẫu PDF gốc — không được để trống.
+function DebitNoteSignature({ dn }) {
+  const signerTitle = dn.chuc_danh_nguoi_ky || DEFAULT_SIGNER_TITLE;
+  const signerName = dn.nguoi_ky || DEFAULT_SIGNER_NAME;
+  return (
+    <>
+      <div className="dn-thanks">Xin trân trọng cám ơn!</div>
 
-      <div
-        style={{
-          marginTop: 20,
-          textAlign: "right",
-          fontSize: 13,
-          paddingRight: 40,
-        }}
-      >
-        <div>{dn.chuc_danh_nguoi_ky}</div>
-        <div style={{ height: 50 }} />
-        <div style={{ fontWeight: 700 }}>{dn.nguoi_ky}</div>
+      <div className="dn-signature">
+        <div className="dn-signature-title">{signerTitle}</div>
+        <div className="dn-signature-space" />
+        <div className="dn-signature-name">{signerName}</div>
       </div>
+    </>
+  );
+}
 
-      <div
-        style={{
-          marginTop: 24,
-          borderTop: "1px solid #999",
-          paddingTop: 8,
-          fontSize: 11,
-          textAlign: "center",
-          color: "#333",
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>{dn.company_name}</div>
+// ===== ĐƯỜNG KẺ NGANG + THÔNG TIN CÔNG TY + DEBIT NOTE — SỐ... =====
+function DebitNoteFooter({ dn, docTitle, pageLabel }) {
+  return (
+    <>
+      <div className="dn-company-footer">
+        <div className="dn-company-name">{dn.company_name}</div>
         {dn.company_address && <div>{dn.company_address}</div>}
         <div>
           {dn.company_tax_code && `MST: ${dn.company_tax_code}`}
@@ -233,18 +206,39 @@ function DnPage({
         </div>
       </div>
 
-      <div
-        style={{
-          textAlign: "center",
-          fontWeight: 700,
-          fontSize: 13,
-          marginTop: 6,
-          letterSpacing: 1,
-        }}
-      >
+      <div className="dn-doc-title">
         {docTitle} — Số: {dn.so_dn}
-        {pageLabel && <span style={{ fontWeight: 400 }}> ({pageLabel})</span>}
+        {pageLabel && <span className="dn-page-label"> ({pageLabel})</span>}
       </div>
+    </>
+  );
+}
+
+// 1 TRANG in hoàn chỉnh, đúng thứ tự PDF: Header -> Tiêu đề -> Bảng -> Tổng cộng ->
+// Thành tiền bằng chữ -> Thông tin thanh toán -> Cảm ơn -> Chữ ký -> Đường kẻ ngang ->
+// Thông tin công ty -> DEBIT NOTE — Số...
+function DnPage({
+  dn,
+  sectionTitle,
+  lines,
+  withInvoiceCol,
+  docTitle,
+  pageLabel,
+  bank,
+}) {
+  const totals = sumLines(lines);
+  return (
+    <div className="dn-sheet">
+      <DebitNoteHeader dn={dn} />
+      <DebitNoteTable
+        title={sectionTitle}
+        dn={dn}
+        lines={lines}
+        withInvoiceCol={withInvoiceCol}
+      />
+      <DebitNotePaymentBlock totals={totals} bank={bank} />
+      <DebitNoteSignature dn={dn} />
+      <DebitNoteFooter dn={dn} docTitle={docTitle} pageLabel={pageLabel} />
     </div>
   );
 }
@@ -282,20 +276,7 @@ export default function DebitNotePrint() {
 
   return (
     <div>
-      <style>{`
-        @media print {
-          .no-print { display: none !important; }
-          .dn-sheet { box-shadow: none !important; margin: 0 !important; }
-          body { background: #fff !important; }
-        }
-        .dn-sheet table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-        .dn-sheet th, .dn-sheet td { border: 1px solid #444; padding: 4px 6px; }
-        .dn-sheet th { background: #f0f0f0; text-align: center; }
-        .dn-page-gap { height: 24px; }
-        @media print { .dn-page-gap { display: none; } }
-      `}</style>
-
-      <Space className="no-print" style={{ marginBottom: 16 }}>
+      <Space className="no-print dn-page-toolbar">
         <Button
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate("/debit-notes")}
@@ -313,7 +294,8 @@ export default function DebitNotePrint() {
 
       {/* MỖI vùng (Cước dịch vụ / Chi hộ) in ra 1 TRANG riêng biệt, đầy đủ như 1 phiếu Debit Note
           hoàn chỉnh — nếu Debit Note này gộp cả 2 vùng thì có 2 trang, ngắt trang khi in
-          (breakBefore trên trang thứ 2). Nếu chỉ có đúng 1 vùng thì chỉ in ra 1 trang như trước. */}
+          (CSS .dn-sheet + .dn-sheet { break-before: page } trong DebitNotePrint.css). Nếu chỉ có
+          đúng 1 vùng thì chỉ in ra 1 trang như trước. */}
       {hasService && (
         <DnPage
           dn={dn}
@@ -322,7 +304,6 @@ export default function DebitNotePrint() {
           withInvoiceCol={false}
           docTitle="DEBIT NOTE"
           pageLabel={isCombined ? "Trang 1/2" : null}
-          breakBefore={false}
           bank={{
             account_number: dn.dv_bank_account_number,
             bank_name: dn.dv_bank_name,
@@ -331,7 +312,6 @@ export default function DebitNotePrint() {
           }}
         />
       )}
-      {isCombined && <div className="dn-page-gap" />}
       {hasDisbursement && (
         <DnPage
           dn={dn}
@@ -340,7 +320,6 @@ export default function DebitNotePrint() {
           withInvoiceCol={true}
           docTitle={isCombined ? "DEBIT NOTE" : "DEBIT NOTE CHI HỘ"}
           pageLabel={isCombined ? "Trang 2/2" : null}
-          breakBefore={isCombined}
           bank={{
             account_number: dn.chi_ho_bank_account_number,
             bank_name: dn.chi_ho_bank_name,

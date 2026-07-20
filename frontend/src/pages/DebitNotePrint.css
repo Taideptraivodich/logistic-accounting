@@ -1,0 +1,182 @@
+/* DebitNotePrint.css
+ * CSS cho giao diện in Debit Note — tổ chức theo từng block của PDF mẫu, theo đúng
+ * thứ tự: Header -> Tiêu đề -> Bảng -> Tổng cộng -> Thành tiền bằng chữ ->
+ * Thông tin thanh toán -> Cảm ơn -> Chữ ký -> Đường kẻ ngang -> Thông tin công ty ->
+ * DEBIT NOTE - Số...
+ * Không đổi business logic / API / DB — chỉ là CSS cho phần in.
+ */
+
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+.dn-page-toolbar {
+  margin-bottom: 16px;
+}
+
+/* Khung 1 trang in (1 vùng: Cước dịch vụ hoặc Chi hộ) */
+.dn-sheet {
+  background: #fff;
+  max-width: 900px;
+  margin: 0 auto;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #000;
+}
+
+.dn-sheet + .dn-sheet {
+  margin-top: 20px;
+}
+
+/* ===== HEADER: Kính gửi (trái) / Ngày (phải) ===== */
+.dn-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.dn-header-left div {
+  margin: 0;
+}
+
+.dn-header-right {
+  white-space: nowrap;
+  padding-left: 16px;
+}
+
+.dn-intro {
+  margin: 4px 0;
+}
+
+.dn-declaration {
+  margin-bottom: 4px;
+}
+
+/* ===== TITLE: PHÍ DỊCH VỤ HẢI QUAN / PHÍ CHI HỘ ===== */
+.dn-title {
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ===== TABLE ===== */
+.dn-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.dn-table th,
+.dn-table td {
+  border: 1px solid #000;
+  padding: 2px 3px;
+}
+
+.dn-table th {
+  background: #eeeeee;
+  text-align: center;
+  font-weight: 700;
+}
+
+.dn-table td {
+  text-align: center;
+}
+
+.dn-table td.dn-col-detail {
+  text-align: left;
+}
+
+.dn-table td.dn-col-money {
+  text-align: center;
+}
+
+.dn-table tr,
+.dn-table thead {
+  page-break-inside: avoid;
+}
+
+/* ===== DÒNG TỔNG CỘNG ===== */
+.dn-total-label {
+  text-align: center;
+  font-weight: 700;
+}
+
+.dn-total-money {
+  text-align: right;
+  font-weight: 700;
+}
+
+/* ===== THÀNH TIỀN BẰNG CHỮ ===== */
+.dn-amount-words {
+  margin: 0;
+}
+
+/* ===== THÔNG TIN THANH TOÁN ===== */
+.dn-payment-info {
+  margin: 0;
+}
+
+/* ===== XIN TRÂN TRỌNG CÁM ƠN ===== */
+.dn-thanks {
+  margin: 0;
+}
+
+/* ===== KHỐI CHỮ KÝ ===== */
+.dn-signature {
+  text-align: right;
+  padding-right: 40px;
+}
+
+.dn-signature-title {
+  margin: 0;
+}
+
+.dn-signature-space {
+  height: 50px;
+}
+
+.dn-signature-name {
+  font-weight: 700;
+  margin: 0;
+}
+
+/* ===== ĐƯỜNG KẺ NGANG + THÔNG TIN CÔNG TY ===== */
+.dn-company-footer {
+  border-top: 1px solid #000;
+  text-align: center;
+  color: #000;
+}
+
+.dn-company-name {
+  font-weight: 700;
+}
+
+/* ===== DEBIT NOTE — SỐ... ===== */
+.dn-doc-title {
+  text-align: center;
+  font-weight: 700;
+}
+
+.dn-doc-title .dn-page-label {
+  font-weight: 400;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  .dn-sheet {
+    margin: 0 !important;
+    max-width: none !important;
+  }
+  .dn-sheet + .dn-sheet {
+    margin-top: 0;
+    break-before: page;
+    page-break-before: always;
+  }
+}
