@@ -21,6 +21,7 @@ import {
   UserOutlined,
   LogoutOutlined,
   KeyOutlined,
+  PictureOutlined,
 } from '@ant-design/icons';
 
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
@@ -38,6 +39,8 @@ import DebitNotes from './pages/DebitNotes.jsx';
 import DebitNoteForm from './pages/DebitNoteForm.jsx';
 import DebitNotePrint from './pages/DebitNotePrint.jsx';
 import ChangePassword from './pages/ChangePassword.jsx';
+import ChangeAvatar from './pages/ChangeAvatar.jsx';
+import baykaoLogo from './assets/baykao-logo-cropped.png';
 
 const { Header, Sider, Content } = Layout;
 
@@ -82,6 +85,12 @@ function Shell() {
 
   const userMenuItems = [
     {
+      key: 'change-avatar',
+      icon: <PictureOutlined />,
+      label: 'Đổi ảnh đại diện',
+      onClick: () => navigate('/change-avatar'),
+    },
+    {
       key: 'change-password',
       icon: <KeyOutlined />,
       label: 'Đổi mật khẩu',
@@ -111,13 +120,21 @@ function Shell() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            gap: 8,
             fontWeight: 700,
-            fontSize: collapsed ? 14 : 16,
-            color: '#1677ff',
+            fontSize: collapsed ? 13 : 18,
+            letterSpacing: 0.5,
+            color: '#0a2540',
             borderBottom: '1px solid #f0f0f0',
+            padding: '0 8px',
           }}
         >
-          {collapsed ? 'LOGI' : 'LOGISTICS MANAGER'}
+          <img
+            src={baykaoLogo}
+            alt="BAYKAO"
+            style={{ height: collapsed ? 26 : 32, width: 'auto', flexShrink: 0 }}
+          />
+          {!collapsed && 'BAYKAO'}
         </div>
         <Menu
           mode="inline"
@@ -143,7 +160,7 @@ function Shell() {
           </Typography.Title>
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <Avatar size="small" icon={<UserOutlined />} />
+              <Avatar size="small" src={user?.avatarUrl || undefined} icon={!user?.avatarUrl && <UserOutlined />} />
               <Typography.Text>{user?.fullName || user?.username}</Typography.Text>
             </div>
           </Dropdown>
@@ -165,6 +182,7 @@ function Shell() {
             <Route path="/doanh-thu" element={<DoanhThu />} />
             <Route path="/catalog" element={<Catalog />} />
             <Route path="/change-password" element={<ChangePassword />} />
+            <Route path="/change-avatar" element={<ChangeAvatar />} />
           </Routes>
         </Content>
       </Layout>

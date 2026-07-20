@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Form, Input, Button, Card, Typography, Alert } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useAuth } from '../auth/AuthContext.jsx';
+import baykaoLogo from '../assets/baykao-logo-cropped.png';
 
 export default function Login() {
   const { login } = useAuth();
@@ -41,8 +42,9 @@ export default function Login() {
     >
       <Card style={{ width: 380, boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Typography.Title level={3} style={{ margin: 0, color: '#1677ff' }}>
-            LOGISTICS MANAGER
+          <img src={baykaoLogo} alt="BAYKAO" style={{ height: 64, width: 'auto', marginBottom: 4 }} />
+          <Typography.Title level={3} style={{ margin: 0, color: '#0a2540' }}>
+            BAYKAO
           </Typography.Title>
           <Typography.Text type="secondary">Đăng nhập để tiếp tục</Typography.Text>
         </div>

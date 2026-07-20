@@ -289,6 +289,12 @@ if (userCount === 0) {
   );
 }
 
+// Đợt "đổi ảnh đại diện": users trước giờ chưa có cột lưu avatar. Lưu trực tiếp dạng data URL
+// (base64) trong DB thay vì lưu file riêng trên đĩa, để đơn giản (không cần thêm thư viện upload
+// file / thư mục static mới, không phải lo dọn file rác khi user đổi ảnh nhiều lần). DB cũ chưa có
+// cột này -> ALTER thêm, mặc định NULL (chưa có ảnh, FE tự hiện icon mặc định).
+ensureColumn("users", "avatar_url", "avatar_url TEXT");
+
 // node:sqlite không có db.transaction() như better-sqlite3, nên tự bọc thủ công.
 // Cách dùng: db.transaction(() => { ... các lệnh ghi ... })()
 db.transaction = (fn) => {

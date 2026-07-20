@@ -35,6 +35,16 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  // Cập nhật một phần thông tin user hiện tại trong state + localStorage (vd sau khi đổi avatar),
+  // không cần gọi lại /auth/login hay load lại trang.
+  const updateUser = useCallback((patch) => {
+    setUser((prev) => {
+      const next = { ...prev, ...patch };
+      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   // Khi load lại trang: nếu có token cũ, kiểm tra lại với backend xem còn hợp lệ không.
   useEffect(() => {
     let cancelled = false;
@@ -71,7 +81,7 @@ export function AuthProvider({ children }) {
   }, [logout]);
 
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, user, loading, login, logout, updateUser, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

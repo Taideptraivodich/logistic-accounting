@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   full_name TEXT,
+  avatar_url TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 

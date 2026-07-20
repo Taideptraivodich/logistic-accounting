@@ -14,7 +14,9 @@ const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Giới hạn mặc định của express.json() là 100kb — không đủ cho ảnh đại diện dạng base64
+// (data URL), nên tăng lên 5mb (ảnh gốc đã được FE resize/nén nhỏ trước khi gửi lên).
+app.use(express.json({ limit: '5mb' }));
 
 // Route công khai, không cần đăng nhập (phải khai báo TRƯỚC middleware requireAuth bên dưới).
 app.use('/api/auth', authRoutes);
