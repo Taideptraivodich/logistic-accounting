@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { revenueExpr, disbursementExpr } = require('../utils/revenue');
+const { revenueExpr, disbursementExpr, receivableExpr } = require('../utils/revenue');
 const router = express.Router();
 
 // ================= CÔNG NỢ KHÁCH HÀNG =================
@@ -19,7 +19,7 @@ router.get('/cong-no-kh', (req, res) => {
   const result = customers.map((c) => {
     const phai_thu =
       db
-        .prepare(`SELECT COALESCE(SUM(${revenueExpr('s.id')}),0) as t FROM shipments s WHERE s.customer_id = ?`)
+        .prepare(`SELECT COALESCE(SUM(${receivableExpr('s.id')}),0) as t FROM shipments s WHERE s.customer_id = ?`)
         .get(c.id).t || 0;
     const chi_ho =
       db
@@ -58,7 +58,7 @@ router.get('/cong-no-kh/:customer_id/chi-tiet', (req, res) => {
   const shipments = db
     .prepare(
       `SELECT s.id, s.ma_lo, s.ngay_ct, s.invoice,
-        ${revenueExpr('s.id')} as phai_thu,
+        ${receivableExpr('s.id')} as phai_thu,
         'lo_hang' as loai
        FROM shipments s WHERE s.customer_id = ?`
     )
@@ -93,7 +93,7 @@ router.get('/cong-no-kh/:customer_id/theo-thang', (req, res) => {
   const shipmentRows = db
     .prepare(
       `SELECT COALESCE(NULLIF(s.ngay_ct, ''), NULLIF(s.ngay_to_khai, '')) as ngay_hieu_luc,
-        ${revenueExpr('s.id')} as revenue_total,
+        ${receivableExpr('s.id')} as revenue_total,
         ${disbursementExpr('s.id')} as chi_ho
        FROM shipments s
        WHERE s.customer_id = ?
@@ -437,29 +437,29 @@ router.get('/doanh-thu', (req, res) => {
   sql += ' ORDER BY s.ngay_ct, s.id';
   const rows = db.prepare(sql).all(...params);
 
-  // Breakdown DOANH THU theo TỪNG khoản Chi hộ trong Customer Charges (giống bố cục file Excel gốc:
-  // mỗi khoản Chi hộ 1 cột riêng, vd "Lệ phí", "Phí CO", "Phí hạ", "Phí nâng"...) — thay cho
-  // breakdown CHI PHÍ theo loai_phi của shipment_charges cũ. CHỈ lấy charge_type='DISBURSEMENT': các
-  // dòng "Cước dịch vụ" (SERVICE) là khoản THU (giá bán/markup dịch vụ), không phải khoản chi hộ hộ
-  // khách kiểu pass-through — đã được gộp sẵn vào cột "Cước DV" (xem cuoc_dv bên dưới), KHÔNG được
-  // tách thêm thành cột riêng ở đây nữa (trước đây bị lặp: vừa nằm trong "Cước DV", vừa hiện thêm 1
-  // cột riêng kiểu chi phí/âm — gây hiểu nhầm "Phí vận chuyển"/"Phí khai báo HQ" v.v. là chi phí).
+  // Breakdown CHI PHÍ (Tổng chi phí = phải trả NCC) theo TỪNG loại phí trong tab "Chi phí" (Cost —
+  // shipment_charges), giống bố cục file Excel gốc: mỗi loại phí 1 cột riêng, vd "Phí CO", "Phí hạ",
+  // "Phí nâng"... CHỈ lấy la_chi_ho = 1 (đúng ý nghĩa "chi hộ" pass-through cho khách, các dòng chi
+  // phí thường/nội bộ không tách cột riêng, vẫn tính đủ trong "Tổng chi phí"). LƯU Ý: phải lấy từ
+  // shipment_charges (Cost — số tiền THỰC TRẢ NCC), KHÔNG lấy từ shipment_customer_charges (Debit
+  // Note — số tiền THU KHÁCH, 2 bên độc lập nhau sau lần copy đầu, xem ghi chú ở
+  // copyChargesToCustomerCharges), nếu không breakdown sẽ lệch hẳn với cột "Tổng chi phí" bên cạnh.
   const shipmentIds = rows.map((r) => r.id);
-  const byTypeMap = new Map(); // shipment_id -> { mo_ta: so_tien }
+  const byTypeMap = new Map(); // shipment_id -> { loai_phi: so_tien }
   const feeTypeSet = new Set();
   if (shipmentIds.length) {
     const placeholders = shipmentIds.map(() => '?').join(',');
     const chargeRows = db
       .prepare(
-        `SELECT shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)') as mo_ta, SUM(don_gia * so_luong) as so_tien
-         FROM shipment_customer_charges WHERE shipment_id IN (${placeholders}) AND charge_type = 'DISBURSEMENT'
-         GROUP BY shipment_id, COALESCE(NULLIF(mo_ta, ''), '(Khác)')`
+        `SELECT shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)') as loai_phi, SUM(so_tien) as so_tien
+         FROM shipment_charges WHERE shipment_id IN (${placeholders}) AND la_chi_ho = 1
+         GROUP BY shipment_id, COALESCE(NULLIF(loai_phi, ''), '(Khác)')`
       )
       .all(...shipmentIds);
     for (const c of chargeRows) {
-      feeTypeSet.add(c.mo_ta);
+      feeTypeSet.add(c.loai_phi);
       if (!byTypeMap.has(c.shipment_id)) byTypeMap.set(c.shipment_id, {});
-      byTypeMap.get(c.shipment_id)[c.mo_ta] = c.so_tien || 0;
+      byTypeMap.get(c.shipment_id)[c.loai_phi] = c.so_tien || 0;
     }
   }
   // Sắp xếp cột theo đúng thứ tự trong danh mục "Loại phí" (nếu tên trùng khớp), phần còn lại xếp sau.
@@ -490,10 +490,14 @@ router.get('/dashboard', (req, res) => {
   // KHÔNG còn cộng shipments.cuoc_dv + shipment_charges.la_chi_ho như trước.
   const doanhThu =
     db.prepare(`SELECT COALESCE(SUM(${revenueExpr('s.id')}),0) as t FROM shipments s`).get().t || 0;
+  // Phải thu (dùng cho Công nợ KH) = doanh thu ĐÃ GỒM VAT — số tiền khách thực sự phải thanh toán,
+  // khác với doanhThu ở trên (chưa gồm VAT, chỉ dùng để tính Lợi nhuận).
+  const phaiThuKH =
+    db.prepare(`SELECT COALESCE(SUM(${receivableExpr('s.id')}),0) as t FROM shipments s`).get().t || 0;
   const chiPhi = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM shipment_charges`).get().t || 0;
   const daThuKH = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM customer_receipts`).get().t || 0;
   const daTraNCC = db.prepare(`SELECT COALESCE(SUM(so_tien),0) as t FROM supplier_payments`).get().t || 0;
-  const congNoKH = doanhThu - daThuKH;
+  const congNoKH = phaiThuKH - daThuKH;
   const congNoNCC = chiPhi - daTraNCC;
 
   // Tồn quỹ theo TỪNG sổ quỹ riêng biệt (không gộp chung, không đếm trùng — chỉ tính từ

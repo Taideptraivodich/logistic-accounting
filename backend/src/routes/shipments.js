@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { revenueExpr, sumCustomerChargesByType } = require('../utils/revenue');
+const { revenueExpr, sumCustomerChargesByType, sumReceivableByType, sumReceivable } = require('../utils/revenue');
 const router = express.Router();
 
 function nextCode(prefix, table, col) {
@@ -42,21 +42,20 @@ function buildAutoContentChi({ soToKhai, loaiPhi, maLo }) {
   return `${tkPart}Chi ${loaiPhi || 'phí'} - ${maLo}`.replace(/\s+/g, ' ').trim();
 }
 
-// Xoá hết phiếu tự sinh cũ đang gắn với lô hàng này, rồi tạo lại theo dữ liệu mới nhất.
-// Gọi bên trong transaction lưu lô hàng, sau khi đã có shipmentId + charges đã lưu.
-function regenerateAutoVouchers(shipmentId, {
+// Chỉ xoá/sinh lại 2 phiếu THU KHÁCH tự động (Cước dịch vụ + Chi hộ) — KHÔNG đụng supplier_payments.
+// Tách riêng khỏi regenerateAutoVouchers để dùng được ở route customer-charges (Debit Note), nơi
+// không có danh sách shipment_charges (Cost) trong tay nên không thể/không nên đụng tới phiếu chi NCC.
+function regenerateAutoCustomerReceipts(shipmentId, {
   soToKhai, customerId, customerName, maLo, ngayCt,
   dichVuAmount, cuocPaymentMethodId, cuocThuNgay,
   chiHoAmount, chiHoPaymentMethodId, chiHoThuNgay,
-  charges,
 }) {
   db.prepare(`DELETE FROM customer_receipts WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
-  db.prepare(`DELETE FROM supplier_payments WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
 
   // v3: "Cước dịch vụ" và "Chi hộ" là 2 khoản thu ĐỘC LẬP (thường về 2 tài khoản/quỹ khác nhau —
   // xem 2 mẫu Debit Note PDF gốc, mỗi mẫu ghi 1 "Người thụ hưởng" riêng) -> tự sinh TỐI ĐA 2 phiếu
-  // thu riêng biệt, mỗi phiếu đúng số tiền phần mình (sumCustomerChargesByType — Single Source of
-  // Truth, xem utils/revenue.js), KHÔNG gộp chung 1 phiếu như trước nữa.
+  // thu riêng biệt, mỗi phiếu đúng số tiền phần mình, ĐÃ GỒM VAT (sumReceivableByType — Single Source
+  // of Truth cho số tiền PHẢI THU, xem utils/revenue.js), KHÔNG gộp chung 1 phiếu như trước nữa.
   if (cuocThuNgay && customerId && (dichVuAmount || 0) > 0) {
     const so_ct = nextCode('PT', 'customer_receipts', 'so_ct');
     const ghi_chu = buildAutoContentThu({ soToKhai, customerName, maLo, label: 'cước dịch vụ' });
@@ -73,6 +72,22 @@ function regenerateAutoVouchers(shipmentId, {
        VALUES (?,?,?,?,?,?,?,1)`
     ).run(so_ct, customerId, shipmentId, ngayCt || null, chiHoAmount, chiHoPaymentMethodId || null, ghi_chu);
   }
+}
+
+// Xoá hết phiếu tự sinh cũ đang gắn với lô hàng này, rồi tạo lại theo dữ liệu mới nhất.
+// Gọi bên trong transaction lưu lô hàng, sau khi đã có shipmentId + charges đã lưu.
+function regenerateAutoVouchers(shipmentId, {
+  soToKhai, customerId, customerName, maLo, ngayCt,
+  dichVuAmount, cuocPaymentMethodId, cuocThuNgay,
+  chiHoAmount, chiHoPaymentMethodId, chiHoThuNgay,
+  charges,
+}) {
+  regenerateAutoCustomerReceipts(shipmentId, {
+    soToKhai, customerId, customerName, maLo, ngayCt,
+    dichVuAmount, cuocPaymentMethodId, cuocThuNgay,
+    chiHoAmount, chiHoPaymentMethodId, chiHoThuNgay,
+  });
+  db.prepare(`DELETE FROM supplier_payments WHERE shipment_id = ? AND auto_generated = 1`).run(shipmentId);
 
   for (const c of charges) {
     if (!c.da_thanh_toan || !(c.so_tien > 0)) continue;
@@ -165,6 +180,11 @@ function getShipmentFull(id) {
   // không liên quan tới công thức doanh thu nữa. doanh_thu_dich_vu/doanh_thu_chi_ho: breakdown theo
   // charge_type — 2 khoản thu ĐỘC LẬP (thường về 2 quỹ khác nhau, xem regenerateAutoVouchers).
   const { dichVu: doanh_thu_dich_vu, chiHo: doanh_thu_chi_ho, total: doanh_thu } = sumCustomerChargesByType(id);
+  // Phải thu (ĐÃ GỒM VAT — số tiền khách thực sự phải thanh toán, khớp Grand Total trên form lô
+  // hàng) — khác doanh_thu ở trên (chưa gồm VAT, chỉ dùng để tính Lợi nhuận). Con_no = phải thu - đã
+  // thu (linked_receipts) -> đây mới là số tiền CÒN THIẾU thực tế, dùng để autofill khi Senior tạo
+  // phiếu thu tay và gắn Lô hàng liên kết (xem frontend Vouchers.jsx onShipmentPick).
+  const phai_thu = sumReceivable(id);
   // Phiếu thu/chi liên kết lô hàng này (tạo tay ở màn Phiếu thu/chi) — hiển thị để Senior biết
   // đã thu/chi tiền cho lô này chưa, không phải để tính lại công thức trên.
   const linked_receipts = db
@@ -173,6 +193,8 @@ function getShipmentFull(id) {
   const linked_payments = db
     .prepare(`SELECT * FROM supplier_payments WHERE shipment_id = ? ORDER BY id`)
     .all(id);
+  const da_thu = linked_receipts.reduce((a, r) => a + (r.so_tien || 0), 0);
+  const con_no = phai_thu - da_thu;
   return {
     ...shipment,
     charges,
@@ -181,6 +203,9 @@ function getShipmentFull(id) {
     doanh_thu,
     doanh_thu_dich_vu,
     doanh_thu_chi_ho,
+    phai_thu,
+    da_thu,
+    con_no,
     loi_nhuan: doanh_thu - tong_chi_phi,
     linked_receipts,
     linked_payments,
@@ -286,7 +311,7 @@ router.post('/', (req, res) => {
     // v3: "Cước dịch vụ" và "Chi hộ" tự sinh 2 phiếu thu ĐỘC LẬP, mỗi phiếu đúng số tiền phần
     // mình (xem regenerateAutoVouchers) — KHÔNG còn dùng cuoc_dv nhập tay.
     const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
-    const { dichVu, chiHo } = sumCustomerChargesByType(shipmentId);
+    const { dichVu, chiHo } = sumReceivableByType(shipmentId);
     regenerateAutoVouchers(shipmentId, {
       soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo, ngayCt: ngayCtHieuLuc,
       dichVuAmount: dichVu, cuocPaymentMethodId: cuoc_payment_method_id, cuocThuNgay: !!cuoc_thu_ngay,
@@ -365,7 +390,7 @@ router.put('/:id', (req, res) => {
     // phiếu thu lấy đúng phần Dịch vụ / Chi hộ hiện có của lô hàng — Single Source of Truth.
     const ma_lo = db.prepare(`SELECT ma_lo FROM shipments WHERE id = ?`).get(req.params.id)?.ma_lo;
     const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(customer_id)?.name;
-    const { dichVu, chiHo } = sumCustomerChargesByType(req.params.id);
+    const { dichVu, chiHo } = sumReceivableByType(req.params.id);
     regenerateAutoVouchers(req.params.id, {
       soToKhai: so_to_khai, customerId: customer_id, customerName, maLo: ma_lo, ngayCt: ngayCtHieuLuc,
       dichVuAmount: dichVu, cuocPaymentMethodId: cuoc_payment_method_id, cuocThuNgay: !!cuoc_thu_ngay,
@@ -417,6 +442,24 @@ router.put('/:id/customer-charges', (req, res) => {
         normalizeChargeType(l.charge_type), l.ghi_chu || null
       );
     });
+
+    // Debit Note (VAT/đơn giá...) vừa đổi -> số tiền PHẢI THU cũng đổi theo, nên phải sinh lại phiếu
+    // thu tự động (nếu không, phiếu thu tự sinh lúc Lưu lô hàng vẫn đứng yên ở số tiền CŨ — thiếu/dư
+    // đúng phần chênh lệch VAT vừa sửa). Chỉ động tới customer_receipts tự sinh của lô này, không
+    // đụng shipment_charges/supplier_payments (route này độc lập với Cost).
+    const shipment = db
+      .prepare(`SELECT customer_id, ma_lo, so_to_khai, ngay_ct, ngay_to_khai, cuoc_payment_method_id, cuoc_thu_ngay, chi_ho_payment_method_id, chi_ho_thu_ngay FROM shipments WHERE id = ?`)
+      .get(shipmentId);
+    if (shipment) {
+      const customerName = db.prepare(`SELECT name FROM customers WHERE id = ?`).get(shipment.customer_id)?.name;
+      const { dichVu, chiHo } = sumReceivableByType(shipmentId);
+      regenerateAutoCustomerReceipts(shipmentId, {
+        soToKhai: shipment.so_to_khai, customerId: shipment.customer_id, customerName, maLo: shipment.ma_lo,
+        ngayCt: shipment.ngay_ct || shipment.ngay_to_khai || null,
+        dichVuAmount: dichVu, cuocPaymentMethodId: shipment.cuoc_payment_method_id, cuocThuNgay: !!shipment.cuoc_thu_ngay,
+        chiHoAmount: chiHo, chiHoPaymentMethodId: shipment.chi_ho_payment_method_id, chiHoThuNgay: !!shipment.chi_ho_thu_ngay,
+      });
+    }
   });
   trx();
   const rows = db
