@@ -12,7 +12,7 @@ import { formatMoney } from '../utils/format';
 const moneyProps = {
   style: { width: '100%' },
   min: 0,
-  formatter: (v) => (v === undefined || v === null ? '' : `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')),
+  formatter: (v) => (v === undefined || v === null || v === '' ? '' : `${Math.round(v)}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')),
   parser: (v) => (v ? v.replace(/,/g, '') : ''),
 };
 

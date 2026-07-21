@@ -26,7 +26,7 @@ const db = require('../db');
 //     tiền chi hộ, thu lại nguyên vẹn từ khách, nên phải tính đủ vào doanh thu/số tiền thu, không
 //     được trừ thuế ra như dòng dịch vụ.
 function revenueExpr(shipmentIdCol) {
-  return `COALESCE(
+  return `ROUND(COALESCE(
     (SELECT SUM(
        CASE WHEN charge_type = 'DISBURSEMENT'
          THEN don_gia * so_luong * (1 + COALESCE(vat_percent, 0) / 100.0)
@@ -35,7 +35,7 @@ function revenueExpr(shipmentIdCol) {
      ) FROM shipment_customer_charges WHERE shipment_id = ${shipmentIdCol}),
     (SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = ${shipmentIdCol}),
     0
-  )`;
+  ), 0)`;
 }
 
 // Subquery phần "Chi hộ" (charge_type = DISBURSEMENT) trong Customer Charges của 1 lô hàng — ĐÃ GỒM
@@ -43,11 +43,11 @@ function revenueExpr(shipmentIdCol) {
 // khấu trừ được thuế nên phần thuế này vẫn tính vào tiền chi hộ). Dùng cho các báo cáo công nợ/doanh
 // thu cần tách riêng phần "chi hộ" khỏi phần "phí dịch vụ" thông thường.
 function disbursementExpr(shipmentIdCol) {
-  return `COALESCE(
+  return `ROUND(COALESCE(
     (SELECT SUM(don_gia * so_luong * (1 + COALESCE(vat_percent, 0) / 100.0)) FROM shipment_customer_charges WHERE shipment_id = ${shipmentIdCol} AND charge_type = 'DISBURSEMENT'),
     (SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = ${shipmentIdCol} AND la_chi_ho = 1),
     0
-  )`;
+  ), 0)`;
 }
 
 // Subquery TỔNG PHẢI THU (đã gồm VAT trên MỌI dòng, kể cả dòng dịch vụ) của 1 lô hàng — đây là số
@@ -57,11 +57,11 @@ function disbursementExpr(shipmentIdCol) {
 // tháng...) — KHÔNG dùng cho báo cáo Doanh thu/Lợi nhuận. Fallback shipment_charges (dữ liệu cũ
 // trước khi có Customer Charges/VAT) không có VAT nên giữ nguyên so_tien, không nhân thêm thuế.
 function receivableExpr(shipmentIdCol) {
-  return `COALESCE(
+  return `ROUND(COALESCE(
     (SELECT SUM(don_gia * so_luong * (1 + COALESCE(vat_percent, 0) / 100.0)) FROM shipment_customer_charges WHERE shipment_id = ${shipmentIdCol}),
     (SELECT SUM(so_tien) FROM shipment_charges WHERE shipment_id = ${shipmentIdCol}),
     0
-  )`;
+  ), 0)`;
 }
 
 // Bản JS (bind param) của revenueExpr/disbursementExpr/receivableExpr, dùng khi cần tính cho 1
@@ -69,17 +69,17 @@ function receivableExpr(shipmentIdCol) {
 // regenerateAutoVouchers).
 function sumCustomerCharges(shipmentId) {
   const row = db.prepare(`SELECT ${revenueExpr('?')} as t`).get(shipmentId, shipmentId);
-  return row.t || 0;
+  return Math.round(row.t || 0);
 }
 
 function sumDisbursement(shipmentId) {
   const row = db.prepare(`SELECT ${disbursementExpr('?')} as t`).get(shipmentId, shipmentId);
-  return row.t || 0;
+  return Math.round(row.t || 0);
 }
 
 function sumReceivable(shipmentId) {
   const row = db.prepare(`SELECT ${receivableExpr('?')} as t`).get(shipmentId, shipmentId);
-  return row.t || 0;
+  return Math.round(row.t || 0);
 }
 
 // Tách doanh thu 1 lô hàng thành 2 phần: "Dịch vụ" (SERVICE + ADJUSTMENT + DISCOUNT — mọi charge_type
