@@ -64,15 +64,28 @@ export default function CongNoNCC() {
     }
   };
 
-  // Chọn "Lô hàng liên kết" -> tự gen Nội dung + Số tiền (tổng chi phí, đã gồm chi hộ), theo
-  // đúng các "loại phí" thật của lô hàng (lấy từ GET /shipments/:id để có mảng charges đầy đủ).
+  // Chọn "Lô hàng liên kết" -> tự gen Nội dung + Số tiền. Số tiền phải LỌC THEO ĐÚNG NCC đang chọn
+  // ở field "Nhà cung cấp" (form supplier_id) — một lô hàng có nhiều dòng chi phí của NHIỀU NCC khác
+  // nhau (xem shipment_charges.supplier_id), không được lấy s.tong_chi_phi (tổng CẢ lô, mọi NCC)
+  // như trước. Đồng thời trừ đi phần đã chi cho đúng NCC này (linked_payments lọc theo supplier_id)
+  // để ra đúng số CÒN PHẢI TRẢ, giống cách Vouchers.jsx/CongNoKH.jsx đã làm cho bên Phải thu.
   const onShipmentPick = async (shipmentId) => {
     if (!shipmentId) return;
+    const supplierId = form.getFieldValue('supplier_id');
+    if (!supplierId) {
+      message.warning('Chọn Nhà cung cấp trước khi chọn Lô hàng liên kết để tính đúng số tiền');
+      return;
+    }
     try {
       const { data: s } = await api.get(`/shipments/${shipmentId}`);
       const tkPart = s.so_to_khai ? `TK ${s.so_to_khai} - ` : '';
-      const soTien = s.tong_chi_phi || 0;
-      const loaiPhiList = [...new Set((s.charges || []).map((c) => c.loai_phi).filter(Boolean))];
+      const myCharges = (s.charges || []).filter((c) => c.supplier_id === supplierId);
+      const phaiTraNcc = myCharges.reduce((a, c) => a + (c.so_tien || 0), 0);
+      const daTraNcc = (s.linked_payments || [])
+        .filter((p) => p.supplier_id === supplierId)
+        .reduce((a, p) => a + (p.so_tien || 0), 0);
+      const soTien = Math.max(phaiTraNcc - daTraNcc, 0);
+      const loaiPhiList = [...new Set(myCharges.map((c) => c.loai_phi).filter(Boolean))];
       const loaiPhiPart = loaiPhiList.length ? loaiPhiList.join(' + ') : 'phí';
       const ghiChu = `${tkPart}Chi ${loaiPhiPart} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
       form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu });
@@ -335,7 +348,7 @@ export default function CongNoNCC() {
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="Chọn lô hàng nếu có — chọn xong sẽ tự điền Nội dung và Số tiền (tổng)"
+              placeholder="Chọn lô hàng nếu có — chọn xong sẽ tự điền Nội dung và Số tiền của đúng NCC đang chọn"
               options={shipments.map((s) => ({ value: s.id, label: `${s.ma_lo} — ${s.customer_name || ''}` }))}
               onChange={onShipmentPick}
             />
@@ -343,8 +356,8 @@ export default function CongNoNCC() {
           <Form.Item label="Số tiền" name="so_tien" rules={[{ required: true }]}>
             <InputNumber
               style={{ width: '100%' }}
-              formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={(v) => v.replace(/,/g, '')}
+              formatter={(v) => (v === undefined || v === null || v === '' ? '' : `${Math.round(v)}`.replace(/\B(?=(\d{3})+(?!\d))/g, ','))}
+              parser={(v) => (v ? v.replace(/,/g, '') : '')}
             />
           </Form.Item>
           <Form.Item label="Chi từ quỹ" name="payment_method_id">

@@ -106,8 +106,22 @@ function VoucherTable({
         setTargetType('owner');
         form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu, [ownerField]: s.customer_id });
       } else {
-        const soTien = s.tong_chi_phi || 0;
-        const loaiPhiList = [...new Set((s.charges || []).map((c) => c.loai_phi).filter(Boolean))];
+        // Một lô hàng có thể có NHIỀU dòng chi phí của NHIỀU NCC khác nhau (shipment_charges.supplier_id) —
+        // không được lấy s.tong_chi_phi (tổng CẢ lô, mọi NCC). Phải lọc theo đúng NCC đang chọn ở field
+        // ownerField ('supplier_id'), và trừ đi phần đã chi cho đúng NCC đó (linked_payments) để ra số
+        // còn phải trả — xem giải thích tương tự ở CongNoNCC.jsx onShipmentPick.
+        const supplierId = form.getFieldValue(ownerField);
+        if (targetType !== 'owner' || !supplierId) {
+          message.warning(`Chọn ${ownerLabel} trước khi chọn Lô hàng liên kết để tính đúng số tiền`);
+          return;
+        }
+        const myCharges = (s.charges || []).filter((c) => c.supplier_id === supplierId);
+        const phaiTraNcc = myCharges.reduce((a, c) => a + (c.so_tien || 0), 0);
+        const daTraNcc = (s.linked_payments || [])
+          .filter((p) => p.supplier_id === supplierId)
+          .reduce((a, p) => a + (p.so_tien || 0), 0);
+        const soTien = Math.max(phaiTraNcc - daTraNcc, 0);
+        const loaiPhiList = [...new Set(myCharges.map((c) => c.loai_phi).filter(Boolean))];
         const loaiPhiPart = loaiPhiList.length ? loaiPhiList.join(' + ') : 'phí';
         const ghiChu = `${tkPart}Chi ${loaiPhiPart} - ${s.ma_lo}`.replace(/\s+/g, ' ').trim();
         form.setFieldsValue({ so_tien: soTien, ghi_chu: ghiChu });
